@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Editor
+*.swp
+*.swo
+*~
+
+# Claude Code workflow
+.claude/
+HANDOFF.md
+docs/brainstorms/
+docs/plans/
+docs/launch/

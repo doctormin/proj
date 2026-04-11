@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>proj - Terminal Project Manager for Vibe Coders</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* ══ Theme: Dark (default) ══ */
+  :root, [data-theme="dark"] {
+    --bg: #0b0b12; --bg2: #14141f; --bg3: #1c1c2b;
+    --fg: #d8d8e4; --fg2: #7c7c96; --fg3: #55556a;
+    --accent: #34d399; --accent2: #10b981; --accent3: #059669;
+    --purple: #a78bfa;
+    --border: #262636; --glow: rgba(52,211,153,0.12);
+    --nav-bg: rgba(11,11,18,0.82);
+    --shadow-img: 0 16px 48px rgba(0,0,0,0.5);
+    --grid-line: rgba(255,255,255,0.018);
+    --ambient1: rgba(52,211,153,0.05); --ambient2: rgba(167,139,250,0.04);
+    --card-hover-border: rgba(52,211,153,0.25); --card-hover-shadow: 0 16px 40px rgba(0,0,0,0.25);
+    --btn-primary-fg: #000; --btn-primary-bg: linear-gradient(135deg,#059669,#34d399);
+    --icon-bg: rgba(52,211,153,0.08);
+  }
+  /* ══ Theme: Light ══ */
+  [data-theme="light"] {
+    --bg: #f6f7f9; --bg2: #ffffff; --bg3: #eceef2;
+    --fg: #1a1a2e; --fg2: #5c5c78; --fg3: #9090a6;
+    --accent: #059669; --accent2: #10b981; --accent3: #047857;
+    --purple: #7c3aed;
+    --border: #cccdd6; --glow: rgba(5,150,105,0.08);
+    --nav-bg: rgba(246,247,249,0.88);
+    --shadow-img: 0 12px 36px rgba(0,0,0,0.1);
+    --grid-line: rgba(0,0,0,0.025);
+    --ambient1: rgba(5,150,105,0.03); --ambient2: rgba(124,58,237,0.02);
+    --card-hover-border: rgba(5,150,105,0.35); --card-hover-shadow: 0 12px 32px rgba(0,0,0,0.06);
+    --btn-primary-fg: #fff; --btn-primary-bg: linear-gradient(135deg,#047857,#10b981);
+    --icon-bg: rgba(5,150,105,0.06);
+  }
+
+  html, body { scroll-behavior: smooth; overflow-x: hidden; max-width: 100vw; }
+  body {
+    font-family: 'Inter','PingFang SC',-apple-system,BlinkMacSystemFont,sans-serif;
+    background: var(--bg); color: var(--fg); line-height: 1.65; min-height: 100vh;
+    transition: background 0.3s, color 0.3s;
+  }
+  [data-theme="dark"] body { -webkit-font-smoothing: antialiased; }
+  body::before { content:''; position:fixed; top:0;left:0;width:100%;height:100%; background: radial-gradient(ellipse 80% 50% at 20% 20%,var(--ambient1),transparent), radial-gradient(ellipse 60% 40% at 80% 80%,var(--ambient2),transparent); pointer-events:none; z-index:-1; }
+  .grid-bg { position:fixed; top:0;left:0;width:100%;height:100%; background-image: linear-gradient(var(--grid-line) 1px,transparent 1px), linear-gradient(90deg,var(--grid-line) 1px,transparent 1px); background-size:60px 60px; pointer-events:none; z-index:-1; }
+  .container { max-width:1100px; margin:0 auto; padding:0 24px; }
+  code, kbd { font-family: 'JetBrains Mono','Fira Code','SF Mono',monospace; }
+  :not(pre) > code, .section-desc code, .feature-card code, .pain-card code, .hero code { font-size:0.85em; background:var(--bg3); padding:2px 7px; border-radius:5px; border:1px solid var(--border); color:var(--accent); }
+
+  /* ══ Nav ══ */
+  nav { position:fixed; top:0;left:0;right:0; z-index:100; backdrop-filter:blur(20px) saturate(1.5); -webkit-backdrop-filter:blur(20px) saturate(1.5); background:var(--nav-bg); border-bottom:1px solid var(--border); transition: background 0.3s; }
+  nav .container { display:flex; align-items:center; justify-content:space-between; height:64px; }
+  .nav-logo { font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.25rem; color:var(--accent); text-decoration:none; }
+  .nav-logo span { color:var(--fg3); font-weight:400; }
+  .nav-links { display:flex; gap:24px; align-items:center; }
+  .nav-links a { color:var(--fg2); text-decoration:none; font-size:0.9rem; transition:color 0.2s; }
+  .nav-links a:hover { color:var(--fg); }
+  .nav-right { display:flex; gap:8px; align-items:center; }
+  .nav-btn { display:inline-flex; align-items:center; gap:6px; background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:6px 12px; font-size:0.85rem; color:var(--fg2); text-decoration:none; cursor:pointer; transition:all 0.2s; }
+  .nav-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .nav-btn svg { width:16px; height:16px; fill:currentColor; }
+
+  /* ══ Hero ══ */
+  .hero { padding:160px 0 100px; text-align:center; }
+  .hero-badge { display:inline-flex; align-items:center; gap:8px; background:var(--icon-bg); border:1px solid rgba(52,211,153,0.15); border-radius:999px; padding:6px 18px; margin-bottom:32px; font-size:0.85rem; color:var(--accent); font-weight:500; }
+  .hero-badge::before { content:''; width:6px;height:6px; background:var(--accent); border-radius:50%; animation:pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(1.5)} }
+  .hero h1 { font-size:clamp(3rem,7vw,4.5rem); font-weight:800; letter-spacing:-0.03em; line-height:1.1; margin-bottom:24px; }
+  .hero h1 .grad { background:linear-gradient(135deg,var(--accent),var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+  .hero p { font-size:1.2rem; color:var(--fg2); max-width:600px; margin:0 auto 40px; line-height:1.7; }
+  .hero-actions { display:flex; gap:16px; justify-content:center; flex-wrap:wrap; }
+  .btn { display:inline-flex; align-items:center; gap:8px; padding:12px 26px; border-radius:10px; font-size:0.95rem; font-weight:600; text-decoration:none; transition:all 0.25s; cursor:pointer; border:none; }
+  .btn-primary { background:var(--btn-primary-bg); color:var(--btn-primary-fg); box-shadow:0 0 24px var(--glow); }
+  .btn-primary:hover { transform:translateY(-2px); box-shadow:0 0 40px var(--glow); }
+  .btn-secondary { background:var(--bg3); color:var(--fg); border:1px solid var(--border); }
+  .btn-secondary:hover { border-color:var(--fg3); }
+  .install-cmd { display:inline-flex; align-items:center; gap:12px; background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:12px 20px; margin-top:28px; font-family:'JetBrains Mono',monospace; font-size:0.85rem; color:var(--fg2); cursor:pointer; transition:border-color 0.2s; max-width:90vw; overflow-x:auto; white-space:nowrap; }
+  .install-cmd:hover { border-color:var(--accent); }
+  .install-cmd .prompt { color:var(--accent); }
+  .install-cmd .copy-hint { font-size:0.7rem; opacity:0.4; }
+
+  /* ══ Sections ══ */
+  .features { padding:100px 0; }
+  .terminal-section { padding:60px 0 100px; }
+  .section-label { display:inline-flex; align-items:center; gap:8px; font-family:'JetBrains Mono',monospace; font-size:0.78rem; color:var(--accent); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:20px; font-weight:500; }
+  .section-title { font-size:clamp(2rem,4vw,2.6rem); font-weight:700; letter-spacing:-0.02em; margin-bottom:16px; }
+  .section-desc { font-size:1.05rem; color:var(--fg2); max-width:580px; margin-bottom:52px; line-height:1.7; }
+  .feature-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:20px; }
+  .feature-card { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:28px; transition:all 0.3s; }
+  .feature-card:hover { border-color:var(--card-hover-border); transform:translateY(-3px); box-shadow:var(--card-hover-shadow); }
+  /* Unified icon style — all use accent color */
+  .feature-icon { width:44px;height:44px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1.3rem; margin-bottom:18px; background:var(--icon-bg); }
+  .feature-card h3 { font-size:1.1rem; font-weight:600; margin-bottom:8px; }
+  .feature-card p { color:var(--fg2); font-size:0.9rem; line-height:1.6; }
+  .pain-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; margin-top:40px; }
+  .pain-card { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:24px; }
+  .pain-card .icon { font-size:1.5rem; margin-bottom:12px; }
+  .pain-card h3 { font-size:1rem; margin-bottom:8px; }
+  .pain-card p { color:var(--fg2); font-size:0.9rem; }
+
+  /* ══ Hotkeys ══ */
+  .hotkeys { padding:80px 0; }
+  .hotkey-table { max-width:640px; margin:0 auto; background:var(--bg2); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .hotkey-table-header { padding:16px 28px; border-bottom:1px solid var(--border); font-weight:600; display:flex; justify-content:space-between; font-size:0.9rem; }
+  .hotkey-row { display:flex; align-items:center; justify-content:space-between; padding:12px 28px; border-bottom:1px solid var(--border); transition:background 0.2s; }
+  .hotkey-row:last-child { border:none; }
+  .hotkey-row:hover { background:var(--icon-bg); }
+  .hotkey-row kbd { font-size:0.82rem; background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:4px 10px; color:var(--accent); min-width:80px; text-align:center; }
+  .hotkey-row span { color:var(--fg2); font-size:0.9rem; }
+
+  /* ══ Install ══ */
+  .install-section { padding:100px 0; text-align:center; position:relative; }
+  .install-section::before { content:''; position:absolute; inset:0; background:radial-gradient(ellipse 60% 50% at 50% 40%,var(--glow),transparent); pointer-events:none; }
+  .install-steps { display:flex; flex-direction:column; gap:20px; max-width:760px; margin:40px auto 0; text-align:left; }
+  .install-step { display:flex; align-items:center; gap:16px; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:22px 28px; overflow:hidden; transition:all 0.2s; }
+  .install-step:hover { transform:translateY(-2px); box-shadow:var(--card-hover-shadow); }
+  .install-step .num { width:32px;height:32px; border-radius:8px; background:var(--icon-bg); color:var(--accent); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:0.9rem; flex-shrink:0; }
+  .install-step > div:not(.num) { min-width:0; flex:1; }
+  .install-step strong { font-size:0.95rem; }
+  .install-step code { font-size:0.82rem; background:var(--bg3); padding:8px 16px; border-radius:8px; display:block; margin-top:10px; color:var(--fg2); overflow-x:auto; white-space:nowrap; }
+  .install-step code .p { color:var(--accent); margin-right:6px; }
+
+  footer { padding:48px 0 56px; border-top:1px solid var(--border); text-align:center; color:var(--fg3); font-size:0.85rem; background:var(--bg2); }
+  footer a { color:var(--accent); text-decoration:none; }
+
+  /* ══ Demo images ══ */
+  .demo-img { width:100%; margin:0 auto; display:block; border-radius:12px; border:1px solid var(--border); box-shadow:var(--shadow-img); transition: box-shadow 0.3s, filter 0.3s; }
+  /* Soften dark screenshots in light mode */
+  [data-theme="light"] .demo-img { border-color:#c8cad0; box-shadow: 0 8px 28px rgba(0,0,0,0.12); }
+
+  /* ══ Chinese typography ══ */
+  [data-lang="zh"] body { line-height:1.75; }
+  [data-lang="zh"] .hero h1 { font-weight:900; }
+  [data-lang="zh"] .btn { padding-left:30px; padding-right:30px; }
+
+  /* ══ Responsive ══ */
+  @media(max-width:640px) { .nav-links{display:none} .hero-actions{flex-direction:column;align-items:center} .pain-grid{grid-template-columns:1fr} }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="grid-bg"></div>
+
+<!-- ══ Nav ══ -->
+<nav>
+  <div class="container">
+    <a href="#" class="nav-logo">proj <span>v1.0</span></a>
+    <div class="nav-links">
+      <a href="#demo" data-i18n="nav_demo">Demo</a>
+      <a href="#features" data-i18n="nav_features">Features</a>
+      <a href="#install" data-i18n="nav_install">Install</a>
+    </div>
+    <div class="nav-right">
+      <button class="nav-btn" id="lang-toggle" title="Switch language">EN/中</button>
+      <button class="nav-btn" id="theme-toggle" title="Toggle theme">
+        <svg id="icon-sun" viewBox="0 0 24 24" style="display:none"><path d="M12 18a6 6 0 100-12 6 6 0 000 12zm0-2a4 4 0 110-8 4 4 0 010 8zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.515 4.929l1.414-1.414L7.05 5.636 5.636 7.05 3.515 4.93zM16.95 18.364l1.414-1.414 2.121 2.121-1.414 1.414-2.121-2.121zm2.121-14.85l1.414 1.415-2.121 2.121-1.414-1.414 2.121-2.121zM5.636 16.95l1.414 1.414-2.121 2.121-1.414-1.414 2.121-2.121zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+        <svg id="icon-moon" viewBox="0 0 24 24"><path d="M12 11.807A9.002 9.002 0 0110.049 2a9.942 9.942 0 00-5.12 2.735c-3.905 3.905-3.905 10.237 0 14.142 3.906 3.906 10.237 3.905 14.143 0A9.946 9.946 0 0022 13.95 9.002 9.002 0 0112 11.807z"/></svg>
+      </button>
+      <a href="https://github.com/user/proj" class="nav-btn">
+        <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<!-- ══ Hero ══ -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge" data-i18n="hero_badge">For Vibe Coders Who Ship</div>
+    <h1 data-i18n-html="hero_title">Too many projects.<br><span class="grad">Zero lost context.</span></h1>
+    <p data-i18n-html="hero_desc">You vibe-code across a dozen repos. Yesterday's breakthroughs are today's "wait, where was I?" proj gives you one place to see every project's progress, TODO, and jump right back in.</p>
+    <div class="hero-actions">
+      <a href="#install" class="btn btn-primary" data-i18n="hero_cta">Get Started</a>
+      <a href="#demo" class="btn btn-secondary" data-i18n="hero_demo">See How It Works</a>
+    </div>
+    <div class="install-cmd" onclick="navigator.clipboard.writeText('git clone https://github.com/user/proj && cd proj && ./install.sh')">
+      <span class="prompt">$</span>
+      git clone https://github.com/user/proj && ./install.sh
+      <span class="copy-hint" data-i18n="click_copy">click to copy</span>
+    </div>
+  </div>
+</section>
+
+<!-- ══ Pain Point ══ -->
+<section class="features" id="demo" style="padding-bottom:60px">
+  <div class="container">
+    <div class="section-label" data-i18n="pain_label">// the problem</div>
+    <h2 class="section-title" data-i18n="pain_title">Sound familiar?</h2>
+    <p class="section-desc" style="max-width:700px" data-i18n-html="pain_desc">You cd into a project you haven't touched in 3 days. What was the plan? What's left? Which Claude conversation had that breakthrough?</p>
+    <div class="pain-grid">
+      <div class="pain-card">
+        <div class="icon">&#x1F635;&#x200D;&#x1F4AB;</div>
+        <h3 data-i18n="pain1_title">"Where was that project?"</h3>
+        <p data-i18n-html="pain1_desc">Dozens of repos scattered across ~/projects, ~/dev, ~/Desktop/temp-thing...</p>
+      </div>
+      <div class="pain-card">
+        <div class="icon">&#x1F914;</div>
+        <h3 data-i18n="pain2_title">"What was I doing?"</h3>
+        <p data-i18n-html="pain2_desc">No summary, no TODO. Just stale git log and code you half-remember writing.</p>
+      </div>
+      <div class="pain-card">
+        <div class="icon">&#x1F6AB;</div>
+        <h3 data-i18n="pain3_title">"Which Claude session?"</h3>
+        <p data-i18n="pain3_desc">You had a great conversation about the auth flow. Good luck finding it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ Solution Demo ══ -->
+<section class="terminal-section">
+  <div class="container">
+    <div class="section-label" style="text-align:center" data-i18n="fix_label">// the fix</div>
+    <h2 class="section-title" style="text-align:center" data-i18n="fix_title1">One command. Full picture.</h2>
+    <p class="section-desc" style="text-align:center;margin:0 auto 48px;max-width:600px" data-i18n-html="fix_desc1"><code>proj add</code> — Claude scans your project and writes the summary for you.</p>
+    <img class="demo-img i18n-img" data-img-en="screenshot-add-en.png" data-img-zh="screenshot-add-zh.png" alt="proj add" style="max-width:720px">
+  </div>
+  <div class="container" style="margin-top:72px">
+    <h2 class="section-title" style="text-align:center" data-i18n="fix_title2">All your projects. One panel.</h2>
+    <p class="section-desc" style="text-align:center;margin:0 auto 48px;max-width:600px" data-i18n-html="fix_desc2">Type <code>proj</code> or hit <kbd>Ctrl-P</kbd> — see progress, TODO, and Claude sessions at a glance.</p>
+    <img class="demo-img i18n-img" data-img-en="screenshot-panel-en.png" data-img-zh="screenshot-panel-zh.png" alt="proj panel" style="max-width:900px">
+  </div>
+</section>
+
+<!-- ══ Features ══ -->
+<section class="features" id="features">
+  <div class="container">
+    <div class="section-label" data-i18n-html="feat_label">// why proj</div>
+    <h2 class="section-title" data-i18n="feat_title">Built for how you actually work.</h2>
+    <p class="section-desc" data-i18n="feat_desc">No GUI. No Electron. Lives in your terminal, right where the code is.</p>
+    <div class="feature-grid">
+      <div class="feature-card"><div class="feature-icon">&#x1F4CB;</div><h3 data-i18n="f1_title">Progress & TODO at a Glance</h3><p data-i18n="f1_desc">See what's done and what's next for every project. AI-generated summaries so you never write them yourself.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x26A1;</div><h3 data-i18n="f2_title">Resume Claude Sessions</h3><p data-i18n="f2_desc">Each project remembers its Claude Code conversations. One keystroke to pick up where you left off.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x1F50D;</div><h3 data-i18n="f3_title">Fuzzy Find & Jump</h3><p data-i18n-html="f3_desc">Ctrl+P from anywhere. Fuzzy search, arrow to the right one, Enter to cd right in.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x1F4CA;</div><h3 data-i18n="f4_title">Know What's in Flight</h3><p data-i18n-html="f4_desc">Active, paused, blocked, done. Your prompt shows the count. Triage at a glance.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x1F916;</div><h3 data-i18n="f5_title">AI Does the Busywork</h3><p data-i18n-html="f5_desc">Claude reads your codebase and generates description, progress, and TODO. You just say proj add.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x2328;&#xFE0F;</div><h3 data-i18n="f6_title">Pure Terminal</h3><p data-i18n-html="f6_desc">zsh + fzf. Tab completion, Starship integration, i18n (English / 中文). Zero extra dependencies.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ Hotkeys ══ -->
+<section class="hotkeys">
+  <div class="container">
+    <div style="text-align:center">
+      <div class="section-label" data-i18n="hk_label">// keyboard first</div>
+      <h2 class="section-title" data-i18n="hk_title">Every action, one keystroke.</h2>
+      <p class="section-desc" style="margin:0 auto 48px" data-i18n="hk_desc">No submenus. No mouse. Just muscle memory.</p>
+    </div>
+    <div class="hotkey-table">
+      <div class="hotkey-table-header"><span data-i18n="hk_key">Key</span><span data-i18n="hk_action">Action</span></div>
+      <div class="hotkey-row"><kbd>Ctrl-P</kbd><span data-i18n="hk1">Open project panel from anywhere</span></div>
+      <div class="hotkey-row"><kbd>Enter</kbd><span data-i18n="hk2">Jump to project directory</span></div>
+      <div class="hotkey-row"><kbd>Ctrl-E</kbd><span data-i18n="hk3">Resume Claude Code session</span></div>
+      <div class="hotkey-row"><kbd>Ctrl-R</kbd><span data-i18n="hk4">AI rescan progress & TODO</span></div>
+      <div class="hotkey-row"><kbd>Ctrl-X</kbd><span data-i18n="hk5">Mark done or remove</span></div>
+      <div class="hotkey-row"><kbd data-i18n="hk6k">Type</kbd><span data-i18n="hk6">Fuzzy search & filter</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ Install ══ -->
+<section class="install-section" id="install">
+  <div class="container">
+    <div class="section-label" data-i18n="inst_label">// get started</div>
+    <h2 class="section-title" data-i18n="inst_title">Up and running in 30 seconds.</h2>
+    <div class="install-steps">
+      <div class="install-step"><div class="num">1</div><div><strong data-i18n="inst1">Clone & install</strong><code><span class="p">$</span> git clone https://github.com/user/proj && cd proj && ./install.sh</code></div></div>
+      <div class="install-step"><div class="num">2</div><div><strong data-i18n="inst2">Restart your shell</strong><code><span class="p">$</span> exec zsh</code></div></div>
+      <div class="install-step"><div class="num">3</div><div><strong data-i18n="inst3">Add your first project</strong><code><span class="p">$</span> cd ~/my-project && proj add</code></div></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>MIT License · Built with zsh, fzf & Claude AI</p>
+  </div>
+</footer>
+
+<!-- ══ JavaScript: i18n + Theme ══ -->
+<script>
+const T = {
+  en: {
+    nav_demo:"Demo", nav_features:"Features", nav_install:"Install",
+    hero_badge:"For Vibe Coders Who Ship",
+    hero_title:'Too many projects.<br><span class="grad">Zero lost context.</span>',
+    hero_desc:'You vibe-code across a dozen repos. Yesterday\'s breakthroughs are today\'s "wait, where was I?" <code>proj</code> gives you one place to see every project\'s progress, TODO, and jump right back in.',
+    hero_cta:"Get Started", hero_demo:"See How It Works", click_copy:"click to copy",
+    pain_label:"// the problem", pain_title:"Sound familiar?",
+    pain_desc:'You <code>cd</code> into a project you haven\'t touched in 3 days. What was the plan? What\'s left? Which Claude conversation had that breakthrough?',
+    pain1_title:'"Where was that project?"', pain1_desc:'Dozens of repos scattered across <code>~/projects</code>, <code>~/dev</code>, <code>~/Desktop/temp-thing</code>...',
+    pain2_title:'"What was I doing?"', pain2_desc:'No summary, no TODO. Just stale <code>git log</code> and code you half-remember writing.',
+    pain3_title:'"Which Claude session?"', pain3_desc:"You had a great conversation about the auth flow. Good luck finding it.",
+    fix_label:"// the fix",
+    fix_title1:"One command. Full picture.",
+    fix_desc1:"<code>proj add</code> — Claude scans your project and writes the summary for you.",
+    fix_title2:"All your projects. One panel.",
+    fix_desc2:"Type <code>proj</code> or hit <kbd>Ctrl-P</kbd> — see progress, TODO, and Claude sessions at a glance.",
+    feat_label:'// why <code style="text-transform:none">proj</code>', feat_title:"Built for how you actually work.",
+    feat_desc:"No GUI. No Electron. Lives in your terminal, right where the code is.",
+    f1_title:"Progress & TODO at a Glance", f1_desc:"See what's done and what's next for every project. AI-generated summaries so you never write them yourself.",
+    f2_title:"Resume Claude Sessions", f2_desc:"Each project remembers its Claude Code conversations. One keystroke to pick up where you left off.",
+    f3_title:"Fuzzy Find & Jump", f3_desc:'<code>Ctrl+P</code> from anywhere. Fuzzy search, arrow to the right one, <code>Enter</code> to <code>cd</code> right in.',
+    f4_title:"Know What's in Flight", f4_desc:'<code>active</code>, <code>paused</code>, <code>blocked</code>, <code>done</code>. Your prompt shows the count. Triage at a glance.',
+    f5_title:"AI Does the Busywork", f5_desc:'Claude reads your codebase and generates description, progress, and TODO. You just say <code>proj add</code>.',
+    f6_title:"Pure Terminal", f6_desc:'<code>zsh</code> + <code>fzf</code>. Tab completion, Starship integration, i18n (English / 中文). Zero extra dependencies.',
+    hk_label:"// keyboard first", hk_title:"Every action, one keystroke.", hk_desc:"No submenus. No mouse. Just muscle memory.",
+    hk_key:"Key", hk_action:"Action",
+    hk1:"Open project panel from anywhere", hk2:"Jump to project directory", hk3:"Resume Claude Code session",
+    hk4:"AI rescan progress & TODO", hk5:"Mark done or remove", hk6k:"Type", hk6:"Fuzzy search & filter",
+    inst_label:"// get started", inst_title:"Up and running in 30 seconds.",
+    inst1:"Clone & install", inst2:"Restart your shell", inst3:"Add your first project",
+  },
+  zh: {
+    nav_demo:"演示", nav_features:"特性", nav_install:"安装",
+    hero_badge:"为 Vibe Coder 打造",
+    hero_title:'项目太多，<br><span class="grad">上下文零丢失。</span>',
+    hero_desc:'你同时推进十几个项目，昨天的灵感变成今天的「我做到哪了？」<code>proj</code> 让你在一个地方看到每个项目的进展、TODO，一键跳回去继续。',
+    hero_cta:"开始使用", hero_demo:"看看效果", click_copy:"点击复制",
+    pain_label:"// 痛点", pain_title:"是不是很熟悉？",
+    pain_desc:'你 <code>cd</code> 进一个三天没碰的项目，计划是什么？还剩什么没做？哪个 Claude 对话里有那个关键思路？',
+    pain1_title:"「项目在哪来着？」", pain1_desc:'几十个仓库散落在 <code>~/projects</code>、<code>~/dev</code>、<code>~/Desktop/临时文件夹</code>...',
+    pain2_title:"「我做到哪了？」", pain2_desc:'没有摘要，没有 TODO，只有过时的 <code>git log</code> 和凌晨两点写的代码。',
+    pain3_title:"「哪个 Claude 会话？」", pain3_desc:"你和 Claude 讨论了一个很棒的方案，但祝你好运能找到它。",
+    fix_label:"// 解法",
+    fix_title1:"一条命令，全局掌握。",
+    fix_desc1:"<code>proj add</code> — Claude 自动扫描项目并生成摘要。",
+    fix_title2:"所有项目，一个面板。",
+    fix_desc2:'输入 <code>proj</code> 或按 <kbd>Ctrl-P</kbd> — 一目了然地查看进展、TODO 和 Claude 会话。',
+    feat_label:'// 为什么选 <code style="text-transform:none">proj</code>', feat_title:"为你的真实工作方式而生。",
+    feat_desc:"没有 GUI，没有 Electron。就在终端里，代码在哪它就在哪。",
+    f1_title:"进展 & TODO 一目了然", f1_desc:"每个项目的完成情况和待办事项，AI 自动生成摘要，你不用自己写。",
+    f2_title:"恢复 Claude 会话", f2_desc:"每个项目记住它的 Claude Code 对话，一键回到上次中断的地方。",
+    f3_title:"模糊搜索 & 快速跳转", f3_desc:'随时 <code>Ctrl+P</code>，模糊搜索项目，回车直接 <code>cd</code> 进去，告别 <code>cd ~/../../哪个目录</code>。',
+    f4_title:"掌握全局进度", f4_desc:'<code>active</code> / <code>paused</code> / <code>blocked</code> / <code>done</code>，提示符显示数量，一眼看清所有在飞的项目。',
+    f5_title:"AI 做杂活", f5_desc:'Claude 阅读你的代码库，自动生成描述、进展和 TODO。你只需要 <code>proj add</code>。',
+    f6_title:"纯终端", f6_desc:'<code>zsh</code> + <code>fzf</code>，Tab 补全，Starship 集成，中英双语。零额外依赖。',
+    hk_label:"// 键盘优先", hk_title:"每个操作，一个按键。", hk_desc:"没有子菜单，不用鼠标，只有肌肉记忆。",
+    hk_key:"按键", hk_action:"操作",
+    hk1:"随时打开项目面板", hk2:"跳转到项目目录", hk3:"恢复 Claude Code 会话",
+    hk4:"AI 重新扫描进展和 TODO", hk5:"标记完成或删除", hk6k:"输入", hk6:"模糊搜索和过滤",
+    inst_label:"// 开始使用", inst_title:"30 秒启动。",
+    inst1:"克隆并安装", inst2:"重启终端", inst3:"添加你的第一个项目",
+  }
+};
+
+function setLang(lang) {
+  document.documentElement.setAttribute('data-lang', lang);
+  localStorage.setItem('proj-lang', lang);
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (T[lang][key] != null) el.textContent = T[lang][key];
+  });
+  document.querySelectorAll('[data-i18n-html]').forEach(el => {
+    const key = el.getAttribute('data-i18n-html');
+    if (T[lang][key] != null) el.innerHTML = T[lang][key];
+  });
+  document.querySelectorAll('.i18n-img').forEach(img => {
+    img.src = img.getAttribute('data-img-' + lang) || img.getAttribute('data-img-en');
+  });
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+  document.title = lang === 'zh' ? 'proj - Vibe Coder 的终端项目管理器' : 'proj - Terminal Project Manager for Vibe Coders';
+}
+
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('proj-theme', theme);
+  document.getElementById('icon-sun').style.display = theme === 'dark' ? 'none' : 'block';
+  document.getElementById('icon-moon').style.display = theme === 'dark' ? 'block' : 'none';
+}
+
+// Init
+(function() {
+  // Theme: localStorage > system preference > dark
+  const saved = localStorage.getItem('proj-theme');
+  if (saved) { setTheme(saved); }
+  else if (window.matchMedia('(prefers-color-scheme: light)').matches) { setTheme('light'); }
+  else { setTheme('dark'); }
+
+  // Lang: localStorage > browser language > en
+  const savedLang = localStorage.getItem('proj-lang');
+  if (savedLang) { setLang(savedLang); }
+  else if (navigator.language.startsWith('zh')) { setLang('zh'); }
+  else { setLang('en'); }
+
+  // Listen for system theme changes
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+    if (!localStorage.getItem('proj-theme')) setTheme(e.matches ? 'dark' : 'light');
+  });
+
+  // Toggle buttons
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  });
+  document.getElementById('lang-toggle').addEventListener('click', () => {
+    setLang(document.documentElement.getAttribute('data-lang') === 'en' ? 'zh' : 'en');
+  });
+})();
+</script>
+</body>
+</html>
