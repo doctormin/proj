@@ -9,6 +9,12 @@ PROJ_DATA="$PROJ_DIR/data"
 PROJ_CONFIG="$PROJ_DIR/config"
 mkdir -p "$PROJ_DATA"
 
+# Auto-migrate schema on load (idempotent)
+if [[ ! -f "$PROJ_DIR/schema_version" ]] || [[ "$(cat "$PROJ_DIR/schema_version" 2>/dev/null)" -lt 2 ]] 2>/dev/null; then
+  # Deferred — _proj_migrate defined later, called after function definitions
+  _PROJ_NEEDS_MIGRATE=1
+fi
+
 # ── config helpers ──
 _proj_cfg_get() {
   # _proj_cfg_get <key> [default]
@@ -20,7 +26,8 @@ _proj_cfg_get() {
 _proj_cfg_set() {
   # _proj_cfg_set <key> <value>
   if [[ -f "$PROJ_CONFIG" ]] && grep -q "^$1=" "$PROJ_CONFIG" 2>/dev/null; then
-    sed -i '' "s|^$1=.*|$1=$2|" "$PROJ_CONFIG"
+    local tmpf=$(mktemp)
+    sed "s|^$1=.*|$1=$2|" "$PROJ_CONFIG" > "$tmpf" && mv "$tmpf" "$PROJ_CONFIG"
   else
     echo "$1=$2" >> "$PROJ_CONFIG"
   fi
@@ -259,16 +266,46 @@ _pc_red=$'\e[31m'
 _pc_magenta=$'\e[35m'
 _pc_blue=$'\e[34m'
 
+# ── machine-id ──
+_proj_machine_id() {
+  local mid_file="$PROJ_DIR/machine-id"
+  if [[ -f "$mid_file" ]]; then
+    cat "$mid_file"
+  else
+    local mid=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$(hostname)-$$-$(date +%s)")
+    echo "$mid" > "$mid_file"
+    echo "$mid"
+  fi
+}
+
 # ── 工具函数 ──
-_proj_names() { ls "$PROJ_DATA" 2>/dev/null; }
+_proj_names() { ls "$PROJ_DATA" 2>/dev/null | grep -v '^\.' ; }
 
 _proj_get() {
+  # For "path" field, check path.<machine-id> first, fall back to legacy "path"
+  if [[ "$2" == "path" ]]; then
+    local mid=$(_proj_machine_id)
+    local mf="$PROJ_DATA/$1/path.$mid"
+    if [[ -f "$mf" ]]; then
+      cat "$mf"
+      return
+    fi
+    # Legacy fallback
+    local f="$PROJ_DATA/$1/path"
+    [[ -f "$f" ]] && cat "$f" || echo ""
+    return
+  fi
   local f="$PROJ_DATA/$1/$2"
   [[ -f "$f" ]] && cat "$f" || echo ""
 }
 
 _proj_set() {
   mkdir -p "$PROJ_DATA/$1"
+  if [[ "$2" == "path" ]]; then
+    local mid=$(_proj_machine_id)
+    echo "$3" > "$PROJ_DATA/$1/path.$mid"
+    return
+  fi
   echo "$3" > "$PROJ_DATA/$1/$2"
 }
 
@@ -281,6 +318,39 @@ _proj_active_count() {
     [[ "$st" != "done" ]] && ((count++))
   done
   echo "$count"
+}
+
+# ── schema migration ──
+_proj_migrate() {
+  local sv_file="$PROJ_DIR/schema_version"
+  if [[ -f "$sv_file" ]] && [[ "$(cat "$sv_file")" -ge 2 ]] 2>/dev/null; then
+    [[ "${1:-}" == "--verbose" ]] && echo "${_pc_dim}Already at schema v2.${_pc_reset}"
+    return 0
+  fi
+
+  local mid=$(_proj_machine_id)
+  local names=()
+  local n=""
+
+  # Check if there are any projects to migrate
+  for n in $(ls "$PROJ_DATA" 2>/dev/null | grep -v '^\.' ); do
+    [[ -f "$PROJ_DATA/$n/path" ]] && names+=("$n")
+  done
+
+  if [[ ${#names[@]} -gt 0 ]]; then
+    echo "${_pc_cyan}Migrating ${#names[@]} projects to schema v2...${_pc_reset}"
+    # Backup
+    cp -r "$PROJ_DATA" "$PROJ_DATA.v1.backup" 2>/dev/null
+    for n in "${names[@]}"; do
+      # Rename path → path.<machine-id>
+      mv "$PROJ_DATA/$n/path" "$PROJ_DATA/$n/path.$mid" 2>/dev/null
+      # Add type=local if missing
+      [[ ! -f "$PROJ_DATA/$n/type" ]] && echo "local" > "$PROJ_DATA/$n/type"
+    done
+    echo "${_pc_green}Migrated ${#names[@]} projects. Backup at ~/.proj/data.v1.backup${_pc_reset}"
+  fi
+
+  echo "2" > "$sv_file"
 }
 
 _proj_path_to_claude_dir() { echo "${1//\//-}"; }
@@ -310,6 +380,7 @@ _proj_add() {
   fi
 
   _proj_set "$name" "path" "$projpath"
+  _proj_set "$name" "type" "local"
   _proj_set "$name" "status" "active"
   _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
   _proj_set "$name" "desc" ""
@@ -541,7 +612,8 @@ _proj_config_lang() {
   if [[ "$lang_code" == "auto" ]]; then
     # 删除 config 中的 lang 行，回到自动检测
     if [[ -f "$PROJ_CONFIG" ]]; then
-      sed -i '' '/^lang=/d' "$PROJ_CONFIG"
+      local tmpf=$(mktemp)
+      sed '/^lang=/d' "$PROJ_CONFIG" > "$tmpf" && mv "$tmpf" "$PROJ_CONFIG"
     fi
     _proj_init_i18n
     echo "${_pc_green}$(_t cfg_saved "${_i[cfg_lang]}" "auto")${_pc_reset}"
@@ -716,6 +788,10 @@ proj() {
     count)     _proj_active_count ;;
     -v|--version)
       echo "proj $PROJ_VERSION"
+      return
+      ;;
+    migrate)
+      _proj_migrate --verbose
       return
       ;;
     help|-h|--help)
@@ -908,3 +984,9 @@ _proj_precmd() {
   export PROJ_ACTIVE_COUNT=$(_proj_active_count)
 }
 precmd_functions+=(_proj_precmd)
+
+# ── Deferred auto-migration ──
+if [[ "${_PROJ_NEEDS_MIGRATE:-0}" == "1" ]]; then
+  _proj_migrate
+  unset _PROJ_NEEDS_MIGRATE
+fi

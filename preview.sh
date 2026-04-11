@@ -6,6 +6,16 @@ PROJ_DATA="$HOME/.proj/data"
 name="$1"
 dir="$PROJ_DATA/$name"
 
+# Cross-platform stat wrapper: returns "MM-DD HH:MM" format
+_proj_stat_mtime() {
+  local f="$1"
+  stat -f "%Sm" -t "%m-%d %H:%M" "$f" 2>/dev/null && return
+  # GNU stat fallback: "2026-04-11 00:47:23.000 +0800" → "04-11 00:47"
+  local raw=$(stat -c "%y" "$f" 2>/dev/null)
+  [[ -n "$raw" ]] && echo "${raw:5:11}" | sed 's/ \([0-9][0-9]:[0-9][0-9]\).*/\1/' | sed 's/-/ /' | sed 's/\([0-9][0-9]\) \([0-9][0-9]:[0-9][0-9]\)/\1 \2/'
+  # Output: "04-11 00:47"
+}
+
 # ── i18n ──
 # PROJ_LANG is set by proj.zsh; fallback to config file, then $LANG
 if [[ -z "$PROJ_LANG" ]]; then
@@ -43,9 +53,22 @@ fi
 
 [[ ! -d "$dir" ]] && echo "$L_NOT_EXIST" && exit 1
 
-get() { [[ -f "$dir/$1" ]] && cat "$dir/$1" || echo ""; }
+get() {
+  if [[ "$1" == "path" ]]; then
+    # Check path.<machine-id> first, fall back to legacy "path"
+    local mid_file="$HOME/.proj/machine-id"
+    if [[ -f "$mid_file" ]]; then
+      local mid=$(cat "$mid_file")
+      [[ -f "$dir/path.$mid" ]] && cat "$dir/path.$mid" && return
+    fi
+    [[ -f "$dir/path" ]] && cat "$dir/path" || echo ""
+    return
+  fi
+  [[ -f "$dir/$1" ]] && cat "$dir/$1" || echo ""
+}
 
 st=$(get status)
+proj_type=$(get type)
 path=$(get path)
 desc=$(get desc)
 updated=$(get updated)
@@ -100,7 +123,7 @@ if [[ -d "$session_dir" ]]; then
 
     echo "$sessions" | while IFS= read -r sf; do
       sid=$(basename "$sf" .jsonl)
-      stime=$(stat -f "%Sm" -t "%m-%d %H:%M" "$sf" 2>/dev/null || stat -c "%y" "$sf" 2>/dev/null | cut -d. -f1)
+      stime=$(_proj_stat_mtime "$sf")
 
       # Extract first user message as summary
       summary=$(grep -m1 '"type":"user"' "$sf" 2>/dev/null \
