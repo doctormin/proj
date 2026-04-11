@@ -25,8 +25,8 @@ AI scans your code, tracks progress and TODO, resumes your Claude Code sessions.
 ## The Problem
 
 When you vibe-code across many projects, you lose context fast:
-- **"Where was that project?"** — repos scattered across ~/projects, ~/dev, ~/Desktop/temp-thing
-- **"What was I doing?"** — no summary, no TODO, just stale git log
+- **"Where was that project?"** — repos scattered across `~/projects`, `~/dev`, `~/Desktop/temp-thing`
+- **"What was I doing?"** — no summary, no TODO, just stale `git log`
 - **"Which Claude session?"** — you had a great conversation about the auth flow, good luck finding it
 - **"What about that server project?"** — you SSH'd in, started something, completely forgot about it
 - **"I was working on this at the office..."** — your home machine has no idea what you did
@@ -46,12 +46,12 @@ Then type `proj` (or `Ctrl+P` from anywhere) — see progress, TODO, and Claude 
 - **AI-Generated Progress & TODO** — `proj add` and Claude writes the summary, progress, and TODO for you. Never write project notes yourself
 - **Fuzzy Find & Jump** — `Ctrl+P` from anywhere, fuzzy search, Enter to `cd` right in
 - **Resume Claude Code Sessions** — One keystroke to pick up the exact Claude Code conversation. Preview shows session history and summaries
-- **Remote Project Tracking** — `proj add-remote` to track projects on remote servers. Enter to SSH jump, metadata synced locally
+- **Remote Project Tracking** — `proj add-remote` to track projects on remote servers. `Enter` to SSH jump, metadata synced locally
 - **Multi-Machine Sync** — `proj sync` to keep all project metadata in sync across machines via a private git repo
 - **Meta Session** — `proj meta` launches an AI advisor that knows all your projects. Ask "which project should I work on next?"
 - **Claude Status Detection** — Preview panel shows whether Claude Code is actively running for each project
-- **Status Tracking** — active / paused / blocked / done, your prompt shows the count via Starship
-- **Cross-Platform** — macOS + Linux (zsh). Pure terminal: zsh + fzf, tab completion, i18n (English / 中文)
+- **Status Tracking** — `active` / `paused` / `blocked` / `done`, your prompt shows the count via Starship
+- **Cross-Platform** — macOS + Linux (`zsh`). Pure terminal: `zsh` + `fzf`, tab completion, i18n (English / 中文)
 
 ## Why not X?
 
@@ -71,10 +71,10 @@ Then type `proj` (or `Ctrl+P` from anywhere) — see progress, TODO, and Claude 
 
 ## Requirements
 
-- **zsh** (macOS default, `apt install zsh` on Linux)
-- **[fzf](https://github.com/junegunn/fzf)** >= 0.38
+- **`zsh`** (macOS default, `apt install zsh` on Linux)
+- **[`fzf`](https://github.com/junegunn/fzf)** >= 0.38
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** (optional — for AI scanning, session resume, and meta advisor. Without it, you can still add/track/jump projects manually)
-- Optional: [Starship](https://starship.rs) (prompt integration), [eza](https://github.com/eza-community/eza) (pretty file listing), [jq](https://jqlang.github.io/jq/) (session preview)
+- Optional: [`starship`](https://starship.rs) (prompt integration), [`eza`](https://github.com/eza-community/eza) (pretty file listing), [`jq`](https://jqlang.github.io/jq/) (session preview)
 
 ## Install
 
@@ -85,10 +85,10 @@ git clone https://github.com/doctormin/proj.git ~/.proj-repo && ~/.proj-repo/ins
 ```
 
 The installer will:
-- Check for required dependencies (zsh, fzf) and warn about optional ones
+- Check for required dependencies (`zsh`, `fzf`) and warn about optional ones
 - Copy files to `~/.proj/`
 - Add one line to your `.zshrc`
-- Optionally configure Starship integration
+- Optionally configure `starship` integration
 
 ### Quick Start (after install)
 
@@ -228,10 +228,10 @@ Claude Code is scanning your project. Large repos take 5-15 seconds. If it fails
 Install [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for AI features. Without it, you can still use `proj add <name> <path>` + manual edits, jump with `proj`/`Ctrl+P`, and manage status.
 
 **`Ctrl+P` doesn't work:**
-Another zsh plugin may have bound `Ctrl+P`. Check with `bindkey '^P'`. proj binds it on load; whichever loads last wins.
+Another `zsh` plugin may have bound `Ctrl+P`. Check with `bindkey '^P'`. `proj` binds it on load; whichever loads last wins.
 
 **Remote project SSH fails:**
-proj opens a new terminal window for SSH. If no terminal emulator is found, it prints the SSH command for manual use. Set `PROJ_TERMINAL` env var to specify your terminal app.
+`proj` opens a new terminal window for SSH. If no terminal emulator is found, it prints the SSH command for manual use. Set `PROJ_TERMINAL` env var to specify your terminal app.
 
 **Sync conflicts:**
 Conflicts are extremely rare with single-user use. If they happen, `proj sync` will show the conflicted files. Resolve them manually in `~/.proj/data/` with standard git tools.
