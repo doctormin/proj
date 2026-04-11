@@ -393,6 +393,87 @@ _proj_add() {
   _proj_scan_with_claude "$name"
 }
 
+# ── proj add-remote ──
+_proj_add_remote() {
+  local name="$1"
+  local remote_spec="$2"  # user@host:/path
+
+  if [[ -z "$name" || -z "$remote_spec" ]]; then
+    echo "${_pc_yellow}Usage: proj add-remote <name> <user@host>:<path>${_pc_reset}"
+    return 1
+  fi
+
+  # Parse user@host:path
+  local host="${remote_spec%%:*}"
+  local rpath="${remote_spec#*:}"
+
+  if [[ "$host" == "$remote_spec" || -z "$rpath" ]]; then
+    echo "${_pc_red}Invalid format. Use: proj add-remote <name> <user@host>:<path>${_pc_reset}"
+    return 1
+  fi
+
+  # Validate host: only allow safe characters
+  if [[ ! "$host" =~ ^[a-zA-Z0-9@._-]+$ ]]; then
+    echo "${_pc_red}Invalid host: contains unsafe characters${_pc_reset}"
+    return 1
+  fi
+
+  # Validate path: reject shell metacharacters
+  if [[ "$rpath" =~ [\$\`\;|\&] || "$rpath" =~ \.\. ]]; then
+    echo "${_pc_red}Invalid path: contains unsafe characters${_pc_reset}"
+    return 1
+  fi
+
+  if _proj_exists "$name"; then
+    echo "${_pc_yellow}$(_t proj_exists "$name")${_pc_reset}"
+    return 1
+  fi
+
+  _proj_set "$name" "type" "remote"
+  _proj_set "$name" "host" "$host"
+  _proj_set "$name" "remote_path" "$rpath"
+  _proj_set "$name" "status" "active"
+  _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
+  _proj_set "$name" "desc" ""
+  _proj_set "$name" "progress" ""
+  _proj_set "$name" "todo" ""
+
+  echo "${_pc_green}Remote project ${_pc_bold}$name${_pc_reset}${_pc_green} added: ${host}:${rpath}${_pc_reset}"
+  echo "${_pc_dim}Use 'proj edit $name desc <description>' to add a description${_pc_reset}"
+}
+
+# ── SSH jump for remote projects ──
+_proj_ssh_jump() {
+  local host="$1"
+  local rpath="$2"
+  local escaped_path=$(printf %q "$rpath")
+  local ssh_cmd="ssh -t $host \"cd $escaped_path && exec \\\$SHELL -l\" || { echo 'SSH connection failed. Press enter to close.'; read; }"
+
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    # macOS: use PROJ_TERMINAL or default to Terminal.app
+    if [[ -n "${PROJ_TERMINAL:-}" ]]; then
+      "$PROJ_TERMINAL" -e bash -c "$ssh_cmd" &
+    else
+      osascript -e "tell app \"Terminal\" to do script \"$ssh_cmd\"" 2>/dev/null
+    fi
+  else
+    # Linux: try PROJ_TERMINAL, TERMINAL, x-terminal-emulator, xterm
+    local term="${PROJ_TERMINAL:-${TERMINAL:-}}"
+    if [[ -n "$term" ]]; then
+      "$term" -e bash -c "$ssh_cmd" &
+    elif command -v x-terminal-emulator &>/dev/null; then
+      x-terminal-emulator -e bash -c "$ssh_cmd" &
+    elif command -v xterm &>/dev/null; then
+      xterm -e bash -c "$ssh_cmd" &
+    else
+      echo "${_pc_yellow}Cannot open terminal window. Run manually:${_pc_reset}"
+      echo "  ssh -t $host \"cd $escaped_path && exec \\\$SHELL -l\""
+      return
+    fi
+  fi
+  echo "${_pc_dim}Opening SSH session to ${host}...${_pc_reset}"
+}
+
 # ── Claude 扫描项目进展 ──
 _proj_scan_with_claude() {
   local name="$1"
@@ -670,6 +751,8 @@ _proj_interactive() {
   for name in "${names[@]}"; do
     st=$(_proj_get "$name" "status")
     updated=$(_proj_get "$name" "updated")
+    local ptype=$(_proj_get "$name" "type")
+    local phost=$(_proj_get "$name" "host")
 
     case "$st" in
       active)   icon="●"; st_label="active";  color=$'\033[32m' ;;
@@ -680,12 +763,26 @@ _proj_interactive() {
     esac
 
     line="${name}"$'\t'
-    line+="${color}${icon}${R} ${B}${name}${R}"
+    if [[ "$ptype" == "remote" ]]; then
+      line+="${color}~${R} ${D}[${phost}]${R} ${B}${name}${R}"
+    else
+      line+="${color}${icon}${R} ${B}${name}${R}"
+    fi
     pad=$(( 16 - ${#name} ))
     (( pad < 1 )) && pad=1
     line+="$(printf '%*s' $pad '')"
     line+="${color}${st_label}${R}"
     [[ -n "$updated" ]] && line+="  ${D}${updated}${R}"
+
+    # Error states
+    if [[ "$ptype" != "remote" ]]; then
+      local ppath=$(_proj_get "$name" "path")
+      if [[ -n "$ppath" && ! -d "$ppath" ]]; then
+        line+="  $'\033[33m'! missing${R}"
+      elif [[ -z "$ppath" ]]; then
+        line+="  ${D}~ unlinked${R}"
+      fi
+    fi
 
     fzf_input+="${line}"$'\n'
   done
@@ -727,10 +824,23 @@ _proj_interactive() {
 
   case "$action" in
     go)
-      local projpath=$(_proj_get "$target" "path")
-      if [[ -d "$projpath" ]]; then
-        cd "$projpath"
-        echo "${_pc_cyan}→ $projpath${_pc_reset}"
+      local target_type=$(_proj_get "$target" "type")
+      if [[ "$target_type" == "remote" ]]; then
+        local rhost=$(_proj_get "$target" "host")
+        local rpath=$(_proj_get "$target" "remote_path")
+        _proj_ssh_jump "$rhost" "$rpath"
+      else
+        local projpath=$(_proj_get "$target" "path")
+        if [[ -n "$projpath" && -d "$projpath" ]]; then
+          cd "$projpath"
+          echo "${_pc_cyan}→ $projpath${_pc_reset}"
+        elif [[ -z "$projpath" ]]; then
+          echo "${_pc_yellow}Project '$target' has no local path on this machine.${_pc_reset}"
+          echo "${_pc_dim}Use: proj edit $target path /your/local/path${_pc_reset}"
+        else
+          echo "${_pc_yellow}Path not found: $projpath${_pc_reset}"
+          echo "${_pc_dim}Use: proj edit $target path /new/path${_pc_reset}"
+        fi
       fi
       ;;
     cc)
@@ -777,6 +887,7 @@ proj() {
   shift 2>/dev/null
   case "$cmd" in
     add)       _proj_add "$@" ;;
+    add-remote) _proj_add_remote "$@" ;;
     rm|remove) _proj_rm "$@" ;;
     ls|list)   _proj_list "$@" ;;
     go|cd)     _proj_go "$@" ;;

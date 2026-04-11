@@ -70,6 +70,8 @@ get() {
 st=$(get status)
 proj_type=$(get type)
 path=$(get path)
+host=$(get host)
+remote_path=$(get remote_path)
 desc=$(get desc)
 updated=$(get updated)
 progress=$(get progress)
@@ -84,11 +86,24 @@ case "$st" in
   *)       icon="○ $st"     ;;
 esac
 
-C='\033[36m'; Y='\033[33m'; G='\033[32m'; D='\033[2m'; B='\033[1m'; R='\033[0m'
+C='\033[36m'; Y='\033[33m'; G='\033[32m'; D='\033[2m'; B='\033[1m'; R='\033[0m'; RED='\033[31m'
 
 echo ""
-echo -e "  ${B}${C}$name${R}  $icon"
-echo -e "  ${D}$path${R}"
+if [[ "$proj_type" == "remote" ]]; then
+  echo -e "  ${B}${C}$name${R}  ~remote  $icon"
+  echo -e "  ${D}${host}:${remote_path}${R}"
+else
+  echo -e "  ${B}${C}$name${R}  $icon"
+  if [[ -n "$path" ]]; then
+    if [[ -d "$path" ]]; then
+      echo -e "  ${D}$path${R}"
+    else
+      echo -e "  ${RED}$path (missing)${R}"
+    fi
+  else
+    echo -e "  ${Y}No local path on this machine${R}"
+  fi
+fi
 [[ -n "$updated" ]] && printf "  ${D}${L_LAST_UPDATED}${R}\n" "$updated"
 echo ""
 
@@ -110,48 +125,61 @@ if [[ -n "$todo" ]]; then
   echo ""
 fi
 
-# Claude session info
-claude_dir="${path//\//-}"
-session_dir="$HOME/.claude/projects/${claude_dir}"
-if [[ -d "$session_dir" ]]; then
-  sessions=$(command ls -t "$session_dir"/*.jsonl 2>/dev/null | head -5)
-  total=$(command ls "$session_dir"/*.jsonl 2>/dev/null | wc -l | tr -d ' ')
-
-  if [[ -n "$sessions" ]]; then
-    printf "  ${B}${G}${L_CLAUDE}${R}  ${D}${L_CLAUDE_TOTAL}${R}\n" "$total"
-    echo ""
-
-    echo "$sessions" | while IFS= read -r sf; do
-      sid=$(basename "$sf" .jsonl)
-      stime=$(_proj_stat_mtime "$sf")
-
-      # Extract first user message as summary
-      summary=$(grep -m1 '"type":"user"' "$sf" 2>/dev/null \
-        | jq -r '.message.content // "" | tostring | .[0:60]' 2>/dev/null)
-      # Collapse whitespace
-      summary=$(echo "$summary" | tr '\n' ' ' | sed 's/  */ /g')
-      [[ ${#summary} -ge 60 ]] && summary="${summary:0:57}..."
-
-      if [[ -n "$summary" ]]; then
-        echo -e "  ${D}${stime}${R}  ${sid:0:8}…"
-        echo -e "  ${D}  ${summary}${R}"
-      else
-        echo -e "  ${D}${stime}${R}  ${sid:0:8}…"
-      fi
-    done
-
-    echo ""
-    echo -e "  ${D}${L_CLAUDE_HINT}${R}"
-  fi
+# Claude session info + Claude status detection (local projects only)
+if [[ "$proj_type" == "remote" ]]; then
+  echo -e "  ${D}SSH to view Claude sessions${R}"
 else
-  echo -e "  ${D}${L_NO_SESSION}${R}"
+  claude_dir="${path//\//-}"
+  session_dir="$HOME/.claude/projects/${claude_dir}"
+  if [[ -d "$session_dir" ]]; then
+    sessions=$(command ls -t "$session_dir"/*.jsonl 2>/dev/null | head -5)
+    total=$(command ls "$session_dir"/*.jsonl 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ -n "$sessions" ]]; then
+      printf "  ${B}${G}${L_CLAUDE}${R}  ${D}${L_CLAUDE_TOTAL}${R}\n" "$total"
+      echo ""
+
+      echo "$sessions" | while IFS= read -r sf; do
+        sid=$(basename "$sf" .jsonl)
+        stime=$(_proj_stat_mtime "$sf")
+
+        summary=$(grep -m1 '"type":"user"' "$sf" 2>/dev/null \
+          | jq -r '.message.content // "" | tostring | .[0:60]' 2>/dev/null)
+        summary=$(echo "$summary" | tr '\n' ' ' | sed 's/  */ /g')
+        [[ ${#summary} -ge 60 ]] && summary="${summary:0:57}..."
+
+        if [[ -n "$summary" ]]; then
+          echo -e "  ${D}${stime}${R}  ${sid:0:8}…"
+          echo -e "  ${D}  ${summary}${R}"
+        else
+          echo -e "  ${D}${stime}${R}  ${sid:0:8}…"
+        fi
+      done
+
+      echo ""
+      echo -e "  ${D}${L_CLAUDE_HINT}${R}"
+    fi
+  else
+    echo -e "  ${D}${L_NO_SESSION}${R}"
+  fi
+
+  # Claude process status detection (R28)
+  if [[ -n "$path" && -d "$path" ]]; then
+    if pgrep -f "claude.*${path}" > /dev/null 2>&1; then
+      echo -e "  ${G}Claude: Running${R}"
+    else
+      echo -e "  ${D}Claude: Idle${R}"
+    fi
+  fi
 fi
 
-# File listing
-echo ""
-echo -e "  ${B}${L_FILES}${R}"
-if command -v eza &>/dev/null; then
-  eza --icons --color=always -1 "$path" 2>/dev/null | head -15 | while IFS= read -r line; do echo "  $line"; done
-else
-  ls -1 "$path" 2>/dev/null | head -15 | while IFS= read -r line; do echo "  $line"; done
+# File listing (local projects only)
+if [[ "$proj_type" != "remote" && -n "$path" && -d "$path" ]]; then
+  echo ""
+  echo -e "  ${B}${L_FILES}${R}"
+  if command -v eza &>/dev/null; then
+    eza --icons --color=always -1 "$path" 2>/dev/null | head -15 | while IFS= read -r line; do echo "  $line"; done
+  else
+    ls -1 "$path" 2>/dev/null | head -15 | while IFS= read -r line; do echo "  $line"; done
+  fi
 fi
