@@ -2,10 +2,10 @@
 
 # proj
 
-**Too many projects. Pick up any of them in 3 seconds.**
+**`zoxide` helps you `cd` faster. `proj` helps you remember what you were doing.**
 
-You vibe-code across a dozen repos. Yesterday's breakthroughs are today's *"wait, where was I?"*
-**proj** gives you one place to see every project's progress, TODO, and jump right back in — AI does the busywork.
+Too many projects. Pick up any of them in 3 seconds.
+AI scans your code, tracks progress and TODO, resumes your Claude Code sessions.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Shell: zsh](https://img.shields.io/badge/Shell-zsh-blue.svg)](#requirements)
@@ -213,10 +213,11 @@ Plain text files. No database. Easy to backup, sync, or edit by hand.
 
 ## Privacy
 
-- **All data stays local** in `~/.proj/` — nothing is uploaded anywhere
-- **AI scanning** uses the official [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) which runs locally on your machine. Your code is sent to Anthropic's API (same as using Claude Code directly), not to any third-party service
-- **Sync** pushes metadata (descriptions, TODO, status) to a **private** git repo you control — no code is synced, only project summaries
-- **No telemetry, no analytics, no tracking**
+- **All project metadata stays local** in `~/.proj/` — plain text files you can read, edit, or delete anytime
+- **AI scanning** uses the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code). When you run `proj add`, your code is sent to Anthropic's API for analysis (same as using Claude Code directly). See [Anthropic's data policy](https://www.anthropic.com/policies/privacy) for retention details. No data is sent to any third-party service
+- **Without Claude Code**, proj still works — you can manually add projects, set descriptions, jump between them, and manage status. AI features are optional
+- **Sync** pushes metadata only (descriptions, TODO, status) to a **private** git repo you control — no source code is ever synced
+- **No telemetry, no analytics, no tracking**. The install script copies two files and adds one line to `.zshrc`. That's it
 
 ## Troubleshooting
 

@@ -10,12 +10,12 @@
 <meta property="og:url" content="https://cc-proj.cc">
 <meta property="og:title" content="proj — Terminal Project Manager for Vibe Coders">
 <meta property="og:description" content="Too many projects? Pick up any of them in 3 seconds. AI scans your code, tracks progress, and resumes Claude sessions.">
-<meta property="og:image" content="https://cc-proj.cc/screenshot-panel-en.png">
+<meta property="og:image" content="https://raw.githubusercontent.com/doctormin/proj/main/docs/screenshot-panel-en.png">
 <meta property="og:locale" content="en_US">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="proj — Terminal Project Manager for Vibe Coders">
 <meta name="twitter:description" content="Too many projects? Pick up any of them in 3 seconds.">
-<meta name="twitter:image" content="https://cc-proj.cc/screenshot-panel-en.png">
+<meta name="twitter:image" content="https://raw.githubusercontent.com/doctormin/proj/main/docs/screenshot-panel-en.png">
 <link rel="canonical" href="https://cc-proj.cc">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"SoftwareApplication","name":"proj","description":"Terminal project manager for vibe coders. AI-powered progress tracking with Claude Code integration.","url":"https://cc-proj.cc","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","license":"https://opensource.org/licenses/MIT","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
@@ -219,7 +219,7 @@
     </div>
     <div class="install-cmd" id="install-cmd" role="button" tabindex="0" aria-label="Copy install command">
       <span class="prompt">$</span>
-      git clone https://github.com/doctormin/proj && ./install.sh
+      git clone https://github.com/doctormin/proj && cd proj && ./install.sh
       <span class="copy-hint" data-i18n="click_copy">click to copy</span>
     </div>
   </div>
@@ -270,8 +270,8 @@
 <section class="features" id="features" aria-label="Features">
   <div class="container">
     <div class="section-label" data-i18n-html="feat_label">// why proj</div>
-    <h2 class="section-title" data-i18n="feat_title">Built for how you actually work.</h2>
-    <p class="section-desc" data-i18n="feat_desc">No GUI. No Electron. Lives in your terminal, right where the code is.</p>
+    <h2 class="section-title" data-i18n="feat_title">Your project memory layer.</h2>
+    <p class="section-desc" data-i18n="feat_desc">Pure shell. Plain text. No repo pollution. Lives in ~/.proj/, not in your codebase.</p>
     <div class="feature-grid">
       <div class="feature-card"><div class="feature-icon">&#x1F4CB;</div><h3 data-i18n="f1_title">Progress & TODO at a Glance</h3><p data-i18n="f1_desc">See what's done and what's next for every project. AI-generated summaries so you never write them yourself.</p></div>
       <div class="feature-card"><div class="feature-icon">&#x26A1;</div><h3 data-i18n="f2_title">Resume Claude Sessions</h3><p data-i18n="f2_desc">Each project remembers its Claude Code conversations. One keystroke to pick up where you left off.</p></div>
@@ -343,8 +343,8 @@ const T = {
     fix_desc1:"<code>proj add</code> — Claude scans your project and writes the summary for you.",
     fix_title2:"All your projects. One panel.",
     fix_desc2:"Type <code>proj</code> or hit <kbd>Ctrl-P</kbd> — see progress, TODO, and Claude sessions at a glance.",
-    feat_label:'// why <code style="text-transform:none">proj</code>', feat_title:"Built for how you actually work.",
-    feat_desc:"No GUI. No Electron. Lives in your terminal, right where the code is.",
+    feat_label:'// why <code style="text-transform:none">proj</code>', feat_title:"Your project memory layer.",
+    feat_desc:"Pure shell. Plain text. No repo pollution. Lives in ~/.proj/, not in your codebase.",
     f1_title:"Progress & TODO at a Glance", f1_desc:"See what's done and what's next for every project. AI-generated summaries so you never write them yourself.",
     f2_title:"Resume Claude Sessions", f2_desc:"Each project remembers its Claude Code conversations. One keystroke to pick up where you left off.",
     f3_title:"Fuzzy Find & Jump", f3_desc:'<code>Ctrl+P</code> from anywhere. Fuzzy search, arrow to the right one, <code>Enter</code> to <code>cd</code> right in.',
@@ -375,8 +375,8 @@ const T = {
     fix_desc1:"<code>proj add</code> — Claude 自动扫描项目并生成摘要。",
     fix_title2:"所有项目，一个面板。",
     fix_desc2:'输入 <code>proj</code> 或按 <kbd>Ctrl-P</kbd> — 一目了然地查看进展、TODO 和 Claude 会话。',
-    feat_label:'// 为什么选 <code style="text-transform:none">proj</code>', feat_title:"为你的真实工作方式而生。",
-    feat_desc:"没有 GUI，没有 Electron。就在终端里，代码在哪它就在哪。",
+    feat_label:'// 为什么选 <code style="text-transform:none">proj</code>', feat_title:"你的项目记忆层。",
+    feat_desc:"纯 Shell 脚本，纯文本存储。不污染仓库，所有数据在 ~/.proj/，不在你的代码里。",
     f1_title:"进展 & TODO 一目了然", f1_desc:"每个项目的完成情况和待办事项，AI 自动生成摘要，你不用自己写。",
     f2_title:"恢复 Claude 会话", f2_desc:"每个项目记住它的 Claude Code 对话，一键回到上次中断的地方。",
     f3_title:"模糊搜索 & 快速跳转", f3_desc:'随时 <code>Ctrl+P</code>，模糊搜索项目，回车直接 <code>cd</code> 进去，告别 <code>cd ~/../../哪个目录</code>。',
@@ -394,14 +394,18 @@ const T = {
 
 function setLang(lang) {
   document.documentElement.setAttribute('data-lang', lang);
-  localStorage.setItem('proj-lang', lang);
+  try { localStorage.setItem('proj-lang', lang); } catch(e) {}
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
     if (T[lang][key] != null) el.textContent = T[lang][key];
   });
   document.querySelectorAll('[data-i18n-html]').forEach(el => {
     const key = el.getAttribute('data-i18n-html');
-    if (T[lang][key] != null) el.innerHTML = T[lang][key];
+    if (T[lang][key] != null) {
+      // Sanitize: only allow safe tags, strip everything else
+      const safe = T[lang][key].replace(/<(?!\/?(?:code|kbd|em|br|span|strong)\b)[^>]+>/gi, '');
+      el.innerHTML = safe;
+    }
   });
   document.querySelectorAll('.i18n-img').forEach(img => {
     img.src = img.getAttribute('data-img-' + lang) || img.getAttribute('data-img-en');
@@ -422,7 +426,7 @@ function setLang(lang) {
 
 function setTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
-  localStorage.setItem('proj-theme', theme);
+  try { localStorage.setItem('proj-theme', theme); } catch(e) {}
   document.getElementById('icon-sun').style.display = theme === 'dark' ? 'none' : 'block';
   document.getElementById('icon-moon').style.display = theme === 'dark' ? 'block' : 'none';
 }
