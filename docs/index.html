@@ -406,18 +406,27 @@ function setLang(lang) {
   document.querySelectorAll('[data-i18n-html]').forEach(el => {
     const key = el.getAttribute('data-i18n-html');
     if (T[lang][key] != null) {
-      // DOM-based sanitization: parse HTML, strip unsafe tags and ALL attributes
-      const allowed = new Set(['code','kbd','em','br','span','strong']);
+      // DOM-based sanitization: allow safe tags, keep only class attribute, strip everything else
+      const allowedTags = new Set(['code','kbd','em','br','span','strong']);
+      const allowedAttrs = new Set(['class','style']);
       const tmp = document.createElement('div');
       tmp.innerHTML = T[lang][key];
       const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_ELEMENT);
       const toReplace = [];
       while(walker.nextNode()) {
         const node = walker.currentNode;
-        if (!allowed.has(node.tagName.toLowerCase())) {
+        if (!allowedTags.has(node.tagName.toLowerCase())) {
           toReplace.push(node);
         } else {
-          while(node.attributes.length > 0) node.removeAttribute(node.attributes[0].name);
+          // Remove dangerous attributes (onclick, onerror, etc.) but keep class/style
+          const toRemove = [];
+          for (let i = 0; i < node.attributes.length; i++) {
+            const name = node.attributes[i].name.toLowerCase();
+            if (!allowedAttrs.has(name) || name.startsWith('on')) toRemove.push(node.attributes[i].name);
+          }
+          toRemove.forEach(a => node.removeAttribute(a));
+          // Strip javascript: from style if present
+          if (node.hasAttribute('style') && node.getAttribute('style').includes('javascript')) node.removeAttribute('style');
         }
       }
       toReplace.forEach(n => n.replaceWith(document.createTextNode(n.textContent)));
