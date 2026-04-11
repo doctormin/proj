@@ -4,6 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>proj - Terminal Project Manager for Vibe Coders</title>
+<meta name="description" content="Stop losing track of your vibe-coded projects. AI-powered progress tracking, TODO generation, and Claude Code session resume — all in your terminal.">
+<meta name="keywords" content="terminal, project manager, CLI, zsh, fzf, Claude, AI, vibe coding">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://cc-proj.cc">
+<meta property="og:title" content="proj — Terminal Project Manager for Vibe Coders">
+<meta property="og:description" content="Too many projects? Pick up any of them in 3 seconds. AI scans your code, tracks progress, and resumes Claude sessions.">
+<meta property="og:image" content="https://cc-proj.cc/screenshot-panel-en.png">
+<meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="proj — Terminal Project Manager for Vibe Coders">
+<meta name="twitter:description" content="Too many projects? Pick up any of them in 3 seconds.">
+<meta name="twitter:image" content="https://cc-proj.cc/screenshot-panel-en.png">
+<link rel="canonical" href="https://cc-proj.cc">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"proj","description":"Terminal project manager for vibe coders. AI-powered progress tracking with Claude Code integration.","url":"https://cc-proj.cc","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","license":"https://opensource.org/licenses/MIT","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+</script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -25,7 +41,7 @@
   /* ══ Theme: Light ══ */
   [data-theme="light"] {
     --bg: #f6f7f9; --bg2: #ffffff; --bg3: #eceef2;
-    --fg: #1a1a2e; --fg2: #5c5c78; --fg3: #9090a6;
+    --fg: #1a1a2e; --fg2: #4a4a64; --fg3: #7a7a90;
     --accent: #059669; --accent2: #10b981; --accent3: #047857;
     --purple: #7c3aed;
     --border: #cccdd6; --glow: rgba(5,150,105,0.08);
@@ -39,8 +55,9 @@
   }
 
   html, body { scroll-behavior: smooth; overflow-x: hidden; max-width: 100vw; }
+  html { scroll-padding-top: 80px; }
   body {
-    font-family: 'Inter','PingFang SC',-apple-system,BlinkMacSystemFont,sans-serif;
+    font-family: 'Inter','PingFang SC','Noto Sans SC','Microsoft YaHei',-apple-system,BlinkMacSystemFont,sans-serif;
     background: var(--bg); color: var(--fg); line-height: 1.65; min-height: 100vh;
     transition: background 0.3s, color 0.3s;
   }
@@ -70,7 +87,7 @@
   .hero-badge::before { content:''; width:6px;height:6px; background:var(--accent); border-radius:50%; animation:pulse 2s ease-in-out infinite; }
   @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(1.5)} }
   .hero h1 { font-size:clamp(3rem,7vw,4.5rem); font-weight:800; letter-spacing:-0.03em; line-height:1.1; margin-bottom:24px; }
-  .hero h1 .grad { background:linear-gradient(135deg,var(--accent),var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+  .hero h1 .grad { color:var(--accent); background:linear-gradient(135deg,var(--accent),var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
   .hero p { font-size:1.2rem; color:var(--fg2); max-width:600px; margin:0 auto 40px; line-height:1.7; }
   .hero-actions { display:flex; gap:16px; justify-content:center; flex-wrap:wrap; }
   .btn { display:inline-flex; align-items:center; gap:8px; padding:12px 26px; border-radius:10px; font-size:0.95rem; font-weight:600; text-decoration:none; transition:all 0.25s; cursor:pointer; border:none; }
@@ -137,11 +154,31 @@
   [data-lang="zh"] .hero h1 { font-weight:900; }
   [data-lang="zh"] .btn { padding-left:30px; padding-right:30px; }
 
+  /* ══ Accessibility ══ */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .nav-btn { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; }
+
+  /* ══ Nav scroll shadow ══ */
+  nav.scrolled { box-shadow: 0 2px 12px rgba(0,0,0,0.15); }
+  [data-theme="light"] nav.scrolled { box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+
+  /* ══ Copy toast ══ */
+  .copy-toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--accent); color:#000; padding:10px 24px; border-radius:8px; font-size:0.9rem; font-weight:600; opacity:0; transition:all 0.3s; pointer-events:none; z-index:200; }
+  .copy-toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+  /* ══ Install cmd scroll hint ══ */
+  .install-cmd { position:relative; }
+  .install-cmd::after { content:''; position:absolute; right:0; top:0; bottom:0; width:32px; background:linear-gradient(90deg,transparent,var(--bg2)); pointer-events:none; border-radius:0 10px 10px 0; opacity:0; transition:opacity 0.2s; }
+  @media(max-width:640px) { .install-cmd::after { opacity:1; } }
+
   /* ══ Responsive ══ */
-  @media(max-width:640px) { .nav-links{display:none} .hero-actions{flex-direction:column;align-items:center} .pain-grid{grid-template-columns:1fr} }
+  @media(max-width:1024px) { .hotkey-table{max-width:100%} }
+  @media(max-width:768px) { .feature-grid{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))} .hero{padding:130px 0 80px} }
+  @media(max-width:640px) { .nav-links{display:none} .hero-actions{flex-direction:column;align-items:center} .pain-grid{grid-template-columns:1fr} .hero{padding:110px 0 60px} .hero h1{font-size:2.2rem} }
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 </head>
 <body>
 <div class="grid-bg"></div>
@@ -156,13 +193,13 @@
       <a href="#install" data-i18n="nav_install">Install</a>
     </div>
     <div class="nav-right">
-      <button class="nav-btn" id="lang-toggle" title="Switch language">EN/中</button>
-      <button class="nav-btn" id="theme-toggle" title="Toggle theme">
+      <button class="nav-btn" id="lang-toggle" title="Switch language" aria-label="Switch language">EN/中</button>
+      <button class="nav-btn" id="theme-toggle" title="Toggle theme" aria-label="Toggle dark/light theme">
         <svg id="icon-sun" viewBox="0 0 24 24" style="display:none"><path d="M12 18a6 6 0 100-12 6 6 0 000 12zm0-2a4 4 0 110-8 4 4 0 010 8zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.515 4.929l1.414-1.414L7.05 5.636 5.636 7.05 3.515 4.93zM16.95 18.364l1.414-1.414 2.121 2.121-1.414 1.414-2.121-2.121zm2.121-14.85l1.414 1.415-2.121 2.121-1.414-1.414 2.121-2.121zM5.636 16.95l1.414 1.414-2.121 2.121-1.414-1.414 2.121-2.121zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
         <svg id="icon-moon" viewBox="0 0 24 24"><path d="M12 11.807A9.002 9.002 0 0110.049 2a9.942 9.942 0 00-5.12 2.735c-3.905 3.905-3.905 10.237 0 14.142 3.906 3.906 10.237 3.905 14.143 0A9.946 9.946 0 0022 13.95 9.002 9.002 0 0112 11.807z"/></svg>
       </button>
-      <a href="https://github.com/doctormin/proj" class="nav-btn">
-        <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      <a href="https://github.com/doctormin/proj" class="nav-btn" aria-label="View on GitHub">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         GitHub
       </a>
     </div>
@@ -170,16 +207,17 @@
 </nav>
 
 <!-- ══ Hero ══ -->
-<section class="hero">
+<section class="hero" aria-label="Introduction">
   <div class="container">
     <div class="hero-badge" data-i18n="hero_badge">For Vibe Coders Who Ship</div>
     <h1 data-i18n-html="hero_title">Too many projects.<br><span class="grad">Pick up any of them in 3 seconds.</span></h1>
+    <p class="hero-note" style="font-size:0.85rem;color:var(--fg3);margin-top:-16px;margin-bottom:24px" data-i18n-html="hero_note">Not a directory jumper like <code>zoxide</code> — proj tracks <em>what you were doing</em> in each project.</p>
     <p data-i18n-html="hero_desc">You vibe-code across a dozen repos. Yesterday's breakthroughs are today's "wait, where was I?" <code>proj</code> gives you one place to see every project's progress, TODO, and jump right back in.</p>
     <div class="hero-actions">
       <a href="#install" class="btn btn-primary" data-i18n="hero_cta">Get Started</a>
       <a href="#demo" class="btn btn-secondary" data-i18n="hero_demo">See How It Works</a>
     </div>
-    <div class="install-cmd" onclick="navigator.clipboard.writeText('git clone https://github.com/doctormin/proj && cd proj && ./install.sh')">
+    <div class="install-cmd" id="install-cmd" role="button" tabindex="0" aria-label="Copy install command">
       <span class="prompt">$</span>
       git clone https://github.com/doctormin/proj && ./install.sh
       <span class="copy-hint" data-i18n="click_copy">click to copy</span>
@@ -188,7 +226,7 @@
 </section>
 
 <!-- ══ Pain Point ══ -->
-<section class="features" id="demo" style="padding-bottom:60px">
+<section class="features" id="demo" style="padding-bottom:60px" aria-label="Problem description">
   <div class="container">
     <div class="section-label" data-i18n="pain_label">// the problem</div>
     <h2 class="section-title" data-i18n="pain_title">Sound familiar?</h2>
@@ -219,17 +257,17 @@
     <div class="section-label" style="text-align:center" data-i18n="fix_label">// the fix</div>
     <h2 class="section-title" style="text-align:center" data-i18n="fix_title1">One command. Full picture.</h2>
     <p class="section-desc" style="text-align:center;margin:0 auto 48px;max-width:600px" data-i18n-html="fix_desc1"><code>proj add</code> — Claude scans your project and writes the summary for you.</p>
-    <img class="demo-img i18n-img" data-img-en="screenshot-add-en.png" data-img-zh="screenshot-add-zh.png" alt="proj add" style="max-width:720px">
+    <img class="demo-img i18n-img" data-img-en="screenshot-add-en.png" data-img-zh="screenshot-add-zh.png" alt="proj add command demo" style="max-width:720px" loading="lazy">
   </div>
   <div class="container" style="margin-top:72px">
     <h2 class="section-title" style="text-align:center" data-i18n="fix_title2">All your projects. One panel.</h2>
     <p class="section-desc" style="text-align:center;margin:0 auto 48px;max-width:600px" data-i18n-html="fix_desc2">Type <code>proj</code> or hit <kbd>Ctrl-P</kbd> — see progress, TODO, and Claude sessions at a glance.</p>
-    <img class="demo-img i18n-img" data-img-en="screenshot-panel-en.png" data-img-zh="screenshot-panel-zh.png" alt="proj panel" style="max-width:900px">
+    <img class="demo-img i18n-img" data-img-en="screenshot-panel-en.png" data-img-zh="screenshot-panel-zh.png" alt="proj interactive panel demo" style="max-width:900px" loading="lazy">
   </div>
 </section>
 
 <!-- ══ Features ══ -->
-<section class="features" id="features">
+<section class="features" id="features" aria-label="Features">
   <div class="container">
     <div class="section-label" data-i18n-html="feat_label">// why proj</div>
     <h2 class="section-title" data-i18n="feat_title">Built for how you actually work.</h2>
@@ -266,7 +304,7 @@
 </section>
 
 <!-- ══ Install ══ -->
-<section class="install-section" id="install">
+<section class="install-section" id="install" aria-label="Installation">
   <div class="container">
     <div class="section-label" data-i18n="inst_label">// get started</div>
     <h2 class="section-title" data-i18n="inst_title">Up and running in 30 seconds.</h2>
@@ -283,6 +321,7 @@
     <p>MIT License · Built with zsh, fzf & Claude AI</p>
   </div>
 </footer>
+<div class="copy-toast" id="copy-toast" role="alert" aria-live="polite"></div>
 
 <!-- ══ JavaScript: i18n + Theme ══ -->
 <script>
@@ -292,7 +331,8 @@ const T = {
     hero_badge:"For Vibe Coders Who Ship",
     hero_title:'Too many projects.<br><span class="grad">Pick up any of them in 3 seconds.</span>',
     hero_desc:'You vibe-code across a dozen repos. Yesterday\'s breakthroughs are today\'s "wait, where was I?" <code>proj</code> gives you one place to see every project\'s progress, TODO, and jump right back in.',
-    hero_cta:"Get Started", hero_demo:"See How It Works", click_copy:"click to copy",
+    hero_note:'Not a directory jumper like <code>zoxide</code> — proj tracks <em>what you were doing</em> in each project.',
+    hero_cta:"Get Started", hero_demo:"See How It Works", click_copy:"click to copy", copy_ok:"Copied!", copy_fail:"Copy failed — select manually",
     pain_label:"// the problem", pain_title:"Sound familiar?",
     pain_desc:'You <code>cd</code> into a project you haven\'t touched in 3 days. What was the plan? What\'s left? Which Claude conversation had that breakthrough?',
     pain1_title:'"Where was that project?"', pain1_desc:'Dozens of repos scattered across <code>~/projects</code>, <code>~/dev</code>, <code>~/Desktop/temp-thing</code>...',
@@ -321,9 +361,10 @@ const T = {
   zh: {
     nav_demo:"演示", nav_features:"特性", nav_install:"安装",
     hero_badge:"为 Vibe Coder 打造",
-    hero_title:'项目太多。<br><span class="grad">每一个，随时回来继续。</span>',
+    hero_title:'项目太多。<br><span class="grad">任何一个，3 秒无缝接续。</span>',
     hero_desc:'你同时推进十几个项目，昨天的灵感变成今天的「我做到哪了？」<code>proj</code> 让你在一个地方看到每个项目的进展、TODO，一键跳回去继续。',
-    hero_cta:"开始使用", hero_demo:"看看效果", click_copy:"点击复制",
+    hero_note:'不是像 <code>zoxide</code> 那样的目录跳转——proj 帮你记住每个项目<em>做到了哪里</em>。',
+    hero_cta:"开始使用", hero_demo:"看看效果", click_copy:"点击复制", copy_ok:"已复制!", copy_fail:"复制失败——请手动选择",
     pain_label:"// 痛点", pain_title:"是不是很熟悉？",
     pain_desc:'你 <code>cd</code> 进一个三天没碰的项目，计划是什么？还剩什么没做？哪个 Claude 对话里有那个关键思路？',
     pain1_title:"「项目在哪来着？」", pain1_desc:'几十个仓库散落在 <code>~/projects</code>、<code>~/dev</code>、<code>~/Desktop/临时文件夹</code>...',
@@ -367,6 +408,16 @@ function setLang(lang) {
   });
   document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
   document.title = lang === 'zh' ? 'proj - Vibe Coder 的终端项目管理器' : 'proj - Terminal Project Manager for Vibe Coders';
+  // Sync image alts
+  document.querySelectorAll('.i18n-img').forEach(img => {
+    const alt = img.getAttribute('alt') || '';
+    if (lang === 'zh') img.alt = alt.replace(/demo$/, '演示').replace('command', '命令');
+  });
+  // Sync OG tags
+  const ogTitle = document.querySelector('meta[property="og:title"]');
+  const ogDesc = document.querySelector('meta[property="og:description"]');
+  if (ogTitle) ogTitle.content = lang === 'zh' ? 'proj — Vibe Coder 的终端项目管理器' : 'proj — Terminal Project Manager for Vibe Coders';
+  if (ogDesc) ogDesc.content = lang === 'zh' ? '项目太多？任何一个，3秒无缝接续。AI 扫描代码、追踪进展、恢复 Claude 会话。' : 'Too many projects? Pick up any of them in 3 seconds. AI scans your code, tracks progress, and resumes Claude sessions.';
 }
 
 function setTheme(theme) {
@@ -376,21 +427,29 @@ function setTheme(theme) {
   document.getElementById('icon-moon').style.display = theme === 'dark' ? 'block' : 'none';
 }
 
+// Toast helper
+function showToast(msg) {
+  const t = document.getElementById('copy-toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1500);
+}
+
 // Init
 (function() {
-  // Theme: localStorage > system preference > dark
+  // Theme
   const saved = localStorage.getItem('proj-theme');
   if (saved) { setTheme(saved); }
   else if (window.matchMedia('(prefers-color-scheme: light)').matches) { setTheme('light'); }
   else { setTheme('dark'); }
 
-  // Lang: localStorage > browser language > en
+  // Lang
   const savedLang = localStorage.getItem('proj-lang');
   if (savedLang) { setLang(savedLang); }
   else if (navigator.language.startsWith('zh')) { setLang('zh'); }
   else { setLang('en'); }
 
-  // Listen for system theme changes
+  // System theme changes
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
     if (!localStorage.getItem('proj-theme')) setTheme(e.matches ? 'dark' : 'light');
   });
@@ -401,6 +460,30 @@ function setTheme(theme) {
   });
   document.getElementById('lang-toggle').addEventListener('click', () => {
     setLang(document.documentElement.getAttribute('data-lang') === 'en' ? 'zh' : 'en');
+  });
+
+  // Copy install command with feedback
+  const cmd = document.getElementById('install-cmd');
+  if (cmd) {
+    const handler = () => {
+      const lang = document.documentElement.getAttribute('data-lang') || 'en';
+      navigator.clipboard.writeText('git clone https://github.com/doctormin/proj && cd proj && ./install.sh')
+        .then(() => showToast(T[lang].copy_ok))
+        .catch(() => showToast(T[lang].copy_fail));
+    };
+    cmd.addEventListener('click', handler);
+    cmd.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') handler(); });
+  }
+
+  // Nav scroll shadow
+  window.addEventListener('scroll', () => {
+    document.querySelector('nav').classList.toggle('scrolled', window.scrollY > 20);
+  }, { passive: true });
+
+  // Preload images for both languages
+  ['screenshot-add-zh.png','screenshot-add-en.png','screenshot-panel-zh.png','screenshot-panel-en.png'].forEach(src => {
+    const img = new Image();
+    img.src = src;
   });
 })();
 </script>
