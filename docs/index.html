@@ -88,7 +88,7 @@
   @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(1.5)} }
   .hero h1 { font-size:clamp(3rem,7vw,4.5rem); font-weight:800; letter-spacing:-0.03em; line-height:1.1; margin-bottom:24px; }
   .hero h1 .grad { color:var(--accent); background:linear-gradient(135deg,var(--accent),var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
-  .hero p { font-size:1.2rem; color:var(--fg2); max-width:600px; margin:0 auto 40px; line-height:1.7; }
+  .hero p { font-size:1.2rem; color:var(--fg2); max-width:600px; margin:0 auto 40px; line-height:1.7; text-wrap:balance; }
   .hero-actions { display:flex; gap:16px; justify-content:center; flex-wrap:wrap; }
   .btn { display:inline-flex; align-items:center; gap:8px; padding:12px 26px; border-radius:10px; font-size:0.95rem; font-weight:600; text-decoration:none; transition:all 0.25s; cursor:pointer; border:none; }
   .btn-primary { background:var(--btn-primary-bg); color:var(--btn-primary-fg); box-shadow:0 0 24px var(--glow); }
@@ -362,7 +362,7 @@ const T = {
     nav_demo:"演示", nav_features:"特性", nav_install:"安装",
     hero_badge:"为 Vibe Coder 打造",
     hero_title:'项目太多。<br><span class="grad">任何一个，3 秒无缝接续。</span>',
-    hero_desc:'你同时推进十几个项目，昨天的灵感变成今天的「我做到哪了？」<code>proj</code> 让你在一个地方看到每个项目的进展、TODO，一键跳回去继续。',
+    hero_desc:'你同时推进十几个项目，昨天的灵感变成今天的「我做到哪了？」<code>proj</code> 让你一个面板看清所有项目的进展和 TODO，一键跳回继续。',
     hero_note:'不是像 <code>zoxide</code> 那样的目录跳转——proj 帮你记住每个项目<em>做到了哪里</em>。',
     hero_cta:"开始使用", hero_demo:"看看效果", click_copy:"点击复制", copy_ok:"已复制!", copy_fail:"复制失败——请手动选择",
     pain_label:"// 痛点", pain_title:"是不是很熟悉？",

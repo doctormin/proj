@@ -2,17 +2,21 @@
 
 # proj
 
-**Stop losing track of your vibe-coded projects.**
+**Too many projects. Pick up any of them in 3 seconds.**
 
-You have a dozen repos open. You `cd` into one you touched 3 days ago and think: *"what was the plan? what's left? which Claude session had that idea?"*
-
-**proj** gives you one place to see every project's progress, TODO, and jump right back in.
+You vibe-code across a dozen repos. Yesterday's breakthroughs are today's *"wait, where was I?"*
+**proj** gives you one place to see every project's progress, TODO, and jump right back in — AI does the busywork.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Shell: zsh](https://img.shields.io/badge/Shell-zsh-blue.svg)](#requirements)
-[![AI: Claude](https://img.shields.io/badge/AI-Claude-blueviolet.svg)](https://claude.ai)
+[![Platform: macOS & Linux](https://img.shields.io/badge/Platform-macOS%20%26%20Linux-orange.svg)](#requirements)
+[![AI: Claude Code](https://img.shields.io/badge/AI-Claude%20Code-blueviolet.svg)](https://docs.anthropic.com/en/docs/claude-code)
+[![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-blue.svg)](#)
 
-[Features](#features) · [Install](#install) · [Usage](#usage) · [Hotkeys](#hotkeys) · [Configuration](#configuration)
+[Features](#features) · [Why not X?](#why-not-x) · [Install](#install) · [Usage](#usage) · [Privacy](#privacy)
+
+<!-- TODO: Replace with demo GIF when available -->
+<!-- ![proj demo](docs/demo.gif) -->
 
 </div>
 
@@ -24,32 +28,53 @@ When you vibe-code across many projects, you lose context fast:
 - **"Where was that project?"** — repos scattered across ~/projects, ~/dev, ~/Desktop/temp-thing
 - **"What was I doing?"** — no summary, no TODO, just stale git log
 - **"Which Claude session?"** — you had a great conversation about the auth flow, good luck finding it
+- **"What about that server project?"** — you SSH'd in, started something, completely forgot about it
+- **"I was working on this at the office..."** — your home machine has no idea what you did
 
 ## The Fix
 
-`proj add` in any project directory. Claude AI scans your codebase and writes the summary for you:
+`proj add` in any project directory. Claude Code scans your codebase and writes the summary for you:
 
-![proj add](docs/screenshot-add.png)
+![proj add — Claude scans and generates project summary](docs/screenshot-add-en.png)
 
 Then type `proj` (or `Ctrl+P` from anywhere) — see progress, TODO, and Claude sessions for every project at a glance:
 
-![proj interactive panel](docs/screenshot-panel.png)
+![proj interactive panel with project list and preview](docs/screenshot-panel-en.png)
 
 ## Features
 
-- **Progress & TODO at a Glance** — See what's done and what's next for every project, AI-generated
+- **AI-Generated Progress & TODO** — `proj add` and Claude writes the summary, progress, and TODO for you. Never write project notes yourself
 - **Fuzzy Find & Jump** — `Ctrl+P` from anywhere, fuzzy search, Enter to `cd` right in
-- **Resume Claude Sessions** — One keystroke to pick up the exact Claude Code conversation
-- **Status Tracking** — active / paused / blocked / done, your prompt shows the count
-- **AI Does the Busywork** — `proj add` and Claude writes the summary, progress, and TODO for you
-- **Pure Terminal** — zsh + fzf, tab completion, Starship integration, i18n (English / 中文)
+- **Resume Claude Code Sessions** — One keystroke to pick up the exact Claude Code conversation. Preview shows session history and summaries
+- **Remote Project Tracking** — `proj add-remote` to track projects on remote servers. Enter to SSH jump, metadata synced locally
+- **Multi-Machine Sync** — `proj sync` to keep all project metadata in sync across machines via a private git repo
+- **Meta Session** — `proj meta` launches an AI advisor that knows all your projects. Ask "which project should I work on next?"
+- **Claude Status Detection** — Preview panel shows whether Claude Code is actively running for each project
+- **Status Tracking** — active / paused / blocked / done, your prompt shows the count via Starship
+- **Cross-Platform** — macOS + Linux (zsh). Pure terminal: zsh + fzf, tab completion, i18n (English / 中文)
+
+## Why not X?
+
+| Feature | **proj** | zoxide | tmuxinator | Agent Deck |
+|---------|----------|--------|------------|------------|
+| AI-generated project summary | Yes | No | No | No |
+| Progress & TODO tracking | Yes | No | No | No |
+| Claude session resume | Yes | No | No | Partial |
+| Remote server projects | Yes | No | No | Yes |
+| Multi-machine sync | Yes | No | No | No |
+| AI project advisor | Yes | No | No | No |
+| Fuzzy project search | Yes | Yes | No | Yes |
+| Zero config install | Yes | Yes | No | No |
+| Pure shell (no compile) | Yes | No (Rust) | No (Ruby) | No (Go) |
+
+**TL;DR:** zoxide helps you `cd` faster. proj helps you *remember what you were doing* in each project.
 
 ## Requirements
 
-- **zsh** (macOS default)
+- **zsh** (macOS default, `apt install zsh` on Linux)
 - **[fzf](https://github.com/junegunn/fzf)** >= 0.38
-- **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** (for AI scanning & session resume)
-- Optional: [Starship](https://starship.rs) (for prompt integration), [eza](https://github.com/eza-community/eza) (for preview file listing)
+- **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** (optional — for AI scanning, session resume, and meta advisor. Without it, you can still add/track/jump projects manually)
+- Optional: [Starship](https://starship.rs) (prompt integration), [eza](https://github.com/eza-community/eza) (pretty file listing), [jq](https://jqlang.github.io/jq/) (session preview)
 
 ## Install
 
@@ -59,82 +84,76 @@ Then type `proj` (or `Ctrl+P` from anywhere) — see progress, TODO, and Claude 
 git clone https://github.com/doctormin/proj.git ~/.proj-repo && ~/.proj-repo/install.sh
 ```
 
-### Manual
+The installer will:
+- Check for required dependencies (zsh, fzf) and warn about optional ones
+- Copy files to `~/.proj/`
+- Add one line to your `.zshrc`
+- Optionally configure Starship integration
+
+### Quick Start (after install)
 
 ```bash
-# Copy files
-mkdir -p ~/.proj/data
-cp proj.zsh ~/.proj/proj.zsh
-cp preview.sh ~/.proj/preview.sh
-chmod +x ~/.proj/preview.sh
+# 1. Restart your shell
+exec zsh
 
-# Add to ~/.zshrc
-echo '[ -f "$HOME/.proj/proj.zsh" ] && source "$HOME/.proj/proj.zsh"' >> ~/.zshrc
+# 2. Add your first project
+cd ~/my-project && proj add
+
+# 3. Open the panel
+proj   # or Ctrl+P from anywhere
 ```
 
-### Starship integration (optional)
+### Uninstall
 
-Add to `~/.config/starship.toml`:
-
-```toml
-[custom.projects]
-command = 'echo "$PROJ_ACTIVE_COUNT"'
-when = '[ "${PROJ_ACTIVE_COUNT:-0}" -gt 0 ]'
-format = '[📋 $output proj](bold cyan) '
-shell = ['bash', '--noprofile', '--norc']
+```bash
+~/.proj-repo/uninstall.sh        # Remove plugin, keep project data
+~/.proj-repo/uninstall.sh --all  # Remove everything
 ```
 
 ## Usage
 
-### Add a project
+### Local projects
 
 ```bash
-# In any project directory
-cd ~/projects/my-app
-proj add                    # Name defaults to directory name
-
-# Or specify name and path
-proj add my-api ~/src/api
+proj add                          # Add current directory
+proj add my-api ~/src/api         # Add with custom name and path
 ```
 
-Claude will automatically scan the project and populate description, progress, and TODO.
-
-### Interactive panel
+### Remote projects
 
 ```bash
-proj                        # Open the panel
-# or press Ctrl+P from anywhere
+proj add-remote api user@server:/home/user/api
+# Shows in panel with [user@server] label
+# Enter to SSH jump, metadata stored locally
 ```
 
-### Resume Claude Code
+### Multi-machine sync
 
 ```bash
-proj cc                     # Auto-detect from current directory
-proj cc my-api              # Specify project name
-# or press Ctrl-E in the interactive panel
+proj config sync-repo git@github.com:you/proj-sync.git  # Set up (once)
+proj sync                         # Sync project metadata across machines
 ```
 
-### Manage status
+### AI project advisor
 
 ```bash
-proj status my-api paused
-proj status my-api active
-proj status my-api done
+proj meta                         # Launch Meta Session
+# Ask: "Which project should I work on next?"
+# Ask: "Summarize all my TODOs across projects"
 ```
 
-### Rescan with Claude
+### Other commands
 
 ```bash
-proj scan my-api            # Or just `proj scan` inside the project dir
-# or press Ctrl-R in the interactive panel
-```
-
-### Static list
-
-```bash
-proj list                   # All projects
-proj list active            # Only active
-proj list done              # Only completed
+proj                              # Open interactive panel (fzf)
+proj cc [name]                    # Resume Claude Code session
+proj scan [name]                  # Rescan with Claude Code
+proj status <name> <state>        # Change status (active/paused/blocked/done)
+proj edit <name> <field> <value>  # Edit field (desc/path/progress/todo)
+proj list [active|done]           # Static list view
+proj config                       # Settings
+proj --version                    # Show version
+proj help                         # Show help
 ```
 
 ## Hotkeys
@@ -143,7 +162,7 @@ Inside the interactive panel (`proj` or `Ctrl+P`):
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Jump to project directory |
+| `Enter` | Jump to project (cd for local, SSH for remote) |
 | `Ctrl-E` | Resume Claude Code session |
 | `Ctrl-R` | AI rescan progress & TODO |
 | `Ctrl-X` | Mark done or remove project |
@@ -159,10 +178,10 @@ Global (in any terminal):
 ## Configuration
 
 ```bash
-proj config                 # Interactive settings menu
-proj config lang zh         # Set Chinese
-proj config lang en         # Set English
-proj config lang auto       # Follow system locale
+proj config                       # Interactive settings menu
+proj config lang zh               # Set Chinese
+proj config lang en               # Set English
+proj config sync-repo <git-url>   # Set sync repository
 ```
 
 Config is stored in `~/.proj/config`.
@@ -171,34 +190,55 @@ Config is stored in `~/.proj/config`.
 
 ```
 ~/.proj/
-├── config                  # User settings (lang, etc.)
-├── preview.sh              # fzf preview renderer
-├── proj.zsh                # Main plugin
+├── config                        # User settings
+├── machine-id                    # UUID for multi-machine sync
+├── schema_version                # Data format version
+├── version                       # Installed version
+├── meta/                         # Meta Session working directory
+│   └── CLAUDE.md                 # Auto-generated project context
 └── data/
     └── <project-name>/
-        ├── path            # Project directory path
-        ├── status          # active | paused | blocked | done
-        ├── updated         # Last update timestamp
-        ├── desc            # AI-generated description
-        ├── progress        # AI-generated progress items
-        └── todo            # AI-generated TODO items
+        ├── path.<machine-id>     # Local path (per-machine)
+        ├── type                  # "local" or "remote"
+        ├── status                # active | paused | blocked | done
+        ├── updated               # Last update timestamp
+        ├── desc                  # AI-generated description
+        ├── progress              # AI-generated progress
+        ├── todo                  # AI-generated TODO
+        ├── host                  # Remote only: user@hostname
+        └── remote_path           # Remote only: path on server
 ```
 
 Plain text files. No database. Easy to backup, sync, or edit by hand.
 
-## All Commands
+## Privacy
 
-```
-proj                          Open interactive panel (fzf)
-proj add [name] [path]        Add project (Claude auto-scan)
-proj rm <name>                Remove project
-proj cc [name]                Resume Claude Code session
-proj scan [name]              Rescan with Claude AI
-proj status <name> <state>    Change status
-proj edit <name> <field> <v>  Edit field manually
-proj list [active|done]       Static list view
-proj config                   Settings
-proj help                     Show help
+- **All data stays local** in `~/.proj/` — nothing is uploaded anywhere
+- **AI scanning** uses the official [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) which runs locally on your machine. Your code is sent to Anthropic's API (same as using Claude Code directly), not to any third-party service
+- **Sync** pushes metadata (descriptions, TODO, status) to a **private** git repo you control — no code is synced, only project summaries
+- **No telemetry, no analytics, no tracking**
+
+## Troubleshooting
+
+**`proj add` hangs or takes too long:**
+Claude Code is scanning your project. Large repos take 5-15 seconds. If it fails, you can manually set fields with `proj edit <name> desc "your description"`.
+
+**Claude Code not found:**
+Install [Claude Code](https://docs.anthropic.com/en/docs/claude-code) for AI features. Without it, you can still use `proj add <name> <path>` + manual edits, jump with `proj`/`Ctrl+P`, and manage status.
+
+**`Ctrl+P` doesn't work:**
+Another zsh plugin may have bound `Ctrl+P`. Check with `bindkey '^P'`. proj binds it on load; whichever loads last wins.
+
+**Remote project SSH fails:**
+proj opens a new terminal window for SSH. If no terminal emulator is found, it prints the SSH command for manual use. Set `PROJ_TERMINAL` env var to specify your terminal app.
+
+**Sync conflicts:**
+Conflicts are extremely rare with single-user use. If they happen, `proj sync` will show the conflicted files. Resolve them manually in `~/.proj/data/` with standard git tools.
+
+## Update
+
+```bash
+cd ~/.proj-repo && git pull && ./install.sh
 ```
 
 ## License
@@ -208,5 +248,5 @@ MIT
 ---
 
 <div align="center">
-<sub>Built with zsh, fzf & Claude AI</sub>
+<sub>Built with zsh, fzf & Claude Code · <a href="https://cc-proj.cc">cc-proj.cc</a></sub>
 </div>
