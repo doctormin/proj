@@ -88,7 +88,8 @@
   @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(1.5)} }
   .hero h1 { font-size:clamp(3rem,7vw,4.5rem); font-weight:800; letter-spacing:-0.03em; line-height:1.1; margin-bottom:24px; }
   .hero h1 .grad { color:var(--accent); background:linear-gradient(135deg,var(--accent),var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
-  .hero p { font-size:1.2rem; color:var(--fg2); max-width:600px; margin:0 auto 40px; line-height:1.7; text-wrap:balance; }
+  .hero p { font-size:1.2rem; color:var(--fg2); max-width:600px; margin:0 auto 40px; line-height:1.7; }
+  @supports (text-wrap: balance) { .hero p { text-wrap: balance; } }
   .hero-actions { display:flex; gap:16px; justify-content:center; flex-wrap:wrap; }
   .btn { display:inline-flex; align-items:center; gap:8px; padding:12px 26px; border-radius:10px; font-size:0.95rem; font-weight:600; text-decoration:none; transition:all 0.25s; cursor:pointer; border:none; }
   .btn-primary { background:var(--btn-primary-bg); color:var(--btn-primary-fg); box-shadow:0 0 24px var(--glow); }
@@ -154,6 +155,12 @@
   [data-lang="zh"] .hero h1 { font-weight:900; }
   [data-lang="zh"] .btn { padding-left:30px; padding-right:30px; }
 
+  /* ══ Reduced motion ══ */
+  @media (prefers-reduced-motion: reduce) {
+    .hero-badge::before { animation: none; }
+    *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+  }
+
   /* ══ Accessibility ══ */
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   .nav-btn { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; }
@@ -211,7 +218,6 @@
   <div class="container">
     <div class="hero-badge" data-i18n="hero_badge">For Vibe Coders Who Ship</div>
     <h1 data-i18n-html="hero_title">Too many projects.<br><span class="grad">Pick up any of them in 3 seconds.</span></h1>
-    <p class="hero-note" style="font-size:0.85rem;color:var(--fg3);margin-top:-16px;margin-bottom:24px" data-i18n-html="hero_note">Not a directory jumper like <code>zoxide</code> — proj tracks <em>what you were doing</em> in each project.</p>
     <p data-i18n-html="hero_desc">You vibe-code across a dozen repos. Yesterday's breakthroughs are today's "wait, where was I?" <code>proj</code> gives you one place to see every project's progress, TODO, and jump right back in.</p>
     <div class="hero-actions">
       <a href="#install" class="btn btn-primary" data-i18n="hero_cta">Get Started</a>
@@ -219,7 +225,7 @@
     </div>
     <div class="install-cmd" id="install-cmd" role="button" tabindex="0" aria-label="Copy install command">
       <span class="prompt">$</span>
-      git clone https://github.com/doctormin/proj && cd proj && ./install.sh
+      git clone https://github.com/doctormin/proj.git ~/.proj-repo && ~/.proj-repo/install.sh
       <span class="copy-hint" data-i18n="click_copy">click to copy</span>
     </div>
   </div>
@@ -271,14 +277,14 @@
   <div class="container">
     <div class="section-label" data-i18n-html="feat_label">// why proj</div>
     <h2 class="section-title" data-i18n="feat_title">Your project memory layer.</h2>
-    <p class="section-desc" data-i18n="feat_desc">Pure shell. Plain text. No repo pollution. Lives in ~/.proj/, not in your codebase.</p>
+    <p class="section-desc" data-i18n-html="feat_desc">Not a directory jumper — proj tracks <em>what you were doing</em> in each project. Plain text in <code>~/.proj/</code>, not in your codebase.</p>
     <div class="feature-grid">
       <div class="feature-card"><div class="feature-icon">&#x1F4CB;</div><h3 data-i18n="f1_title">Progress & TODO at a Glance</h3><p data-i18n="f1_desc">See what's done and what's next for every project. AI-generated summaries so you never write them yourself.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#x26A1;</div><h3 data-i18n="f2_title">Resume Claude Sessions</h3><p data-i18n="f2_desc">Each project remembers its Claude Code conversations. One keystroke to pick up where you left off.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#x1F50D;</div><h3 data-i18n="f3_title">Fuzzy Find & Jump</h3><p data-i18n-html="f3_desc">Ctrl+P from anywhere. Fuzzy search, arrow to the right one, Enter to cd right in.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#x1F4CA;</div><h3 data-i18n="f4_title">Know What's in Flight</h3><p data-i18n-html="f4_desc">Active, paused, blocked, done. Your prompt shows the count. Triage at a glance.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#x1F916;</div><h3 data-i18n="f5_title">AI Does the Busywork</h3><p data-i18n-html="f5_desc">Claude reads your codebase and generates description, progress, and TODO. You just say proj add.</p></div>
-      <div class="feature-card"><div class="feature-icon">&#x2328;&#xFE0F;</div><h3 data-i18n="f6_title">Lightweight & Fast</h3><p data-i18n-html="f6_desc">~30 KB total, loads in &lt;50ms. Pure shell — no binary, no daemon, no compile step. Plain text data you can <code>cat</code> and <code>grep</code>.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x26A1;</div><h3 data-i18n="f2_title">Resume Claude Code Sessions</h3><p data-i18n="f2_desc">Each project remembers its Claude Code conversations. One keystroke to resume your most recent session.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x1F50D;</div><h3 data-i18n="f3_title">Fuzzy Find & Jump</h3><p data-i18n-html="f3_desc"><code>Ctrl+P</code> from anywhere. Fuzzy search, press Enter to jump straight in.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x1F310;</div><h3 data-i18n="f7_title">Remote & Multi-Machine</h3><p data-i18n="f7_desc">Track projects on remote servers. Sync metadata across machines via git. SSH jump from the panel.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x1F916;</div><h3 data-i18n="f5_title">AI Does the Busywork</h3><p data-i18n-html="f5_desc">Run <code>proj add</code>, and Claude writes description, progress, and TODO. Requires Claude Code (optional).</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x2328;&#xFE0F;</div><h3 data-i18n="f6_title">Lightweight & Fast</h3><p data-i18n-html="f6_desc">~1500 lines, under 50 KB. Loads in milliseconds. No binary, no daemon, no compile step.</p></div>
     </div>
   </div>
 </section>
@@ -309,7 +315,7 @@
     <div class="section-label" data-i18n="inst_label">// get started</div>
     <h2 class="section-title" data-i18n="inst_title">Up and running in 30 seconds.</h2>
     <div class="install-steps">
-      <div class="install-step"><div class="num">1</div><div><strong data-i18n="inst1">Clone & install</strong><code><span class="p">$</span> git clone https://github.com/doctormin/proj && cd proj && ./install.sh</code></div></div>
+      <div class="install-step"><div class="num">1</div><div><strong data-i18n="inst1">Clone & install</strong><code><span class="p">$</span> git clone https://github.com/doctormin/proj.git ~/.proj-repo && ~/.proj-repo/install.sh</code></div></div>
       <div class="install-step"><div class="num">2</div><div><strong data-i18n="inst2">Restart your shell</strong><code><span class="p">$</span> exec zsh</code></div></div>
       <div class="install-step"><div class="num">3</div><div><strong data-i18n="inst3">Add your first project</strong><code><span class="p">$</span> cd ~/my-project && proj add</code></div></div>
     </div>
@@ -318,7 +324,7 @@
 
 <footer>
   <div class="container">
-    <p>MIT License · Built with zsh, fzf & Claude AI</p>
+    <p>MIT License · Built with zsh, fzf & Claude Code</p>
   </div>
 </footer>
 <div class="copy-toast" id="copy-toast" role="alert" aria-live="polite"></div>
@@ -331,7 +337,6 @@ const T = {
     hero_badge:"For Vibe Coders Who Ship",
     hero_title:'Too many projects.<br><span class="grad">Pick up any of them in 3 seconds.</span>',
     hero_desc:'You vibe-code across a dozen repos. Yesterday\'s breakthroughs are today\'s "wait, where was I?" <code>proj</code> gives you one place to see every project\'s progress, TODO, and jump right back in.',
-    hero_note:'Not a directory jumper like <code>zoxide</code> — proj tracks <em>what you were doing</em> in each project.',
     hero_cta:"Get Started", hero_demo:"See How It Works", click_copy:"click to copy", copy_ok:"Copied!", copy_fail:"Copy failed — select manually",
     pain_label:"// the problem", pain_title:"Sound familiar?",
     pain_desc:'You <code>cd</code> into a project you haven\'t touched in 3 days. What was the plan? What\'s left? Which Claude conversation had that breakthrough?',
@@ -344,13 +349,13 @@ const T = {
     fix_title2:"All your projects. One panel.",
     fix_desc2:"Type <code>proj</code> or hit <kbd>Ctrl-P</kbd> — see progress, TODO, and Claude sessions at a glance.",
     feat_label:'// why <code style="text-transform:none">proj</code>', feat_title:"Your project memory layer.",
-    feat_desc:"Pure shell. Plain text. No repo pollution. Lives in ~/.proj/, not in your codebase.",
+    feat_desc:'Not a directory jumper — proj tracks <em>what you were doing</em> in each project. Plain text in <code>~/.proj/</code>, not in your codebase.',
     f1_title:"Progress & TODO at a Glance", f1_desc:"See what's done and what's next for every project. AI-generated summaries so you never write them yourself.",
-    f2_title:"Resume Claude Sessions", f2_desc:"Each project remembers its Claude Code conversations. One keystroke to pick up where you left off.",
-    f3_title:"Fuzzy Find & Jump", f3_desc:'<code>Ctrl+P</code> from anywhere. Fuzzy search, arrow to the right one, <code>Enter</code> to <code>cd</code> right in.',
-    f4_title:"Know What's in Flight", f4_desc:'<code>active</code>, <code>paused</code>, <code>blocked</code>, <code>done</code>. Your prompt shows the count. Triage at a glance.',
-    f5_title:"AI Does the Busywork", f5_desc:'Claude reads your codebase and generates description, progress, and TODO. You just say <code>proj add</code>.',
-    f6_title:"Lightweight & Fast", f6_desc:'~30 KB total, loads in &lt;50ms. Pure shell — no binary, no daemon, no compile step. Plain text data you can <code>cat</code> and <code>grep</code>.',
+    f2_title:"Resume Claude Code Sessions", f2_desc:"Each project remembers its Claude Code conversations. One keystroke to resume your most recent session.",
+    f3_title:"Fuzzy Find & Jump", f3_desc:'<code>Ctrl+P</code> from anywhere. Fuzzy search, press Enter to jump straight in.',
+    f7_title:"Remote & Multi-Machine", f7_desc:"Track projects on remote servers. Sync metadata across machines via git. SSH jump from the panel.",
+    f5_title:"AI Does the Busywork", f5_desc:'Run <code>proj add</code>, and Claude writes description, progress, and TODO. Requires Claude Code (optional).',
+    f6_title:"Lightweight & Fast", f6_desc:'~1500 lines, under 50 KB. Loads in milliseconds. No binary, no daemon, no compile step.',
     hk_label:"// keyboard first", hk_title:"Every action, one keystroke.", hk_desc:"No submenus. No mouse. Just muscle memory.",
     hk_key:"Key", hk_action:"Action",
     hk1:"Open project panel from anywhere", hk2:"Jump to project directory", hk3:"Resume Claude Code session",
@@ -361,9 +366,8 @@ const T = {
   zh: {
     nav_demo:"演示", nav_features:"特性", nav_install:"安装",
     hero_badge:"为 Vibe Coder 打造",
-    hero_title:'项目太多。<br><span class="grad">任何一个，3 秒无缝接续。</span>',
+    hero_title:'项目太多。<br><span class="grad">任意一个，3 秒接上上下文。</span>',
     hero_desc:'你同时推进十几个项目，昨天的灵感变成今天的「我做到哪了？」<code>proj</code> 让你一个面板看清所有项目的进展和 TODO，一键跳回继续。',
-    hero_note:'不是像 <code>zoxide</code> 那样的目录跳转——proj 帮你记住每个项目<em>做到了哪里</em>。',
     hero_cta:"开始使用", hero_demo:"看看效果", click_copy:"点击复制", copy_ok:"已复制!", copy_fail:"复制失败——请手动选择",
     pain_label:"// 痛点", pain_title:"是不是很熟悉？",
     pain_desc:'你 <code>cd</code> 进一个三天没碰的项目，计划是什么？还剩什么没做？哪个 Claude 对话里有那个关键思路？',
@@ -376,13 +380,13 @@ const T = {
     fix_title2:"所有项目，一个面板。",
     fix_desc2:'输入 <code>proj</code> 或按 <kbd>Ctrl-P</kbd> — 一目了然地查看进展、TODO 和 Claude 会话。',
     feat_label:'// 为什么选 <code style="text-transform:none">proj</code>', feat_title:"你的项目记忆层。",
-    feat_desc:"纯 Shell 脚本，纯文本存储。不污染仓库，所有数据在 ~/.proj/，不在你的代码里。",
+    feat_desc:'不是目录跳转——proj 帮你记住每个项目<em>做到了哪里</em>。纯文本存储在 <code>~/.proj/</code>，不污染你的代码仓库。',
     f1_title:"进展 & TODO 一目了然", f1_desc:"每个项目的完成情况和待办事项，AI 自动生成摘要，你不用自己写。",
-    f2_title:"恢复 Claude 会话", f2_desc:"每个项目记住它的 Claude Code 对话，一键回到上次中断的地方。",
-    f3_title:"模糊搜索 & 快速跳转", f3_desc:'随时 <code>Ctrl+P</code>，模糊搜索项目，回车直接 <code>cd</code> 进去，告别 <code>cd ~/../../哪个目录</code>。',
-    f4_title:"掌握全局进度", f4_desc:'<code>active</code> / <code>paused</code> / <code>blocked</code> / <code>done</code>，提示符显示数量，一眼看清所有在飞的项目。',
-    f5_title:"AI 做杂活", f5_desc:'Claude 阅读你的代码库，自动生成描述、进展和 TODO。你只需要 <code>proj add</code>。',
-    f6_title:"轻量极速", f6_desc:'~30 KB，加载 &lt;50ms。纯 Shell 脚本——无二进制、无守护进程、无编译。纯文本数据，随时 <code>cat</code> 和 <code>grep</code>。',
+    f2_title:"恢复 Claude Code 会话", f2_desc:"每个项目记住它的 Claude Code 会话，一键恢复最近一次对话。",
+    f3_title:"模糊搜索 & 快速跳转", f3_desc:'随时 <code>Ctrl+P</code>，模糊搜索项目，回车直接跳转进去。',
+    f7_title:"远程 & 多机同步", f7_desc:'追踪远程服务器上的项目，通过 git 在多台机器间同步元数据。面板内一键 SSH 跳转。',
+    f5_title:"AI 做杂活", f5_desc:'运行 <code>proj add</code>，Claude 自动生成描述、进展和 TODO。需要 Claude Code（可选）。',
+    f6_title:"轻量极速", f6_desc:'~1500 行，不到 50 KB。毫秒级加载。无二进制、无守护进程、无编译。',
     hk_label:"// 键盘优先", hk_title:"每个操作，一个按键。", hk_desc:"没有子菜单，不用鼠标，只有肌肉记忆。",
     hk_key:"按键", hk_action:"操作",
     hk1:"随时打开项目面板", hk2:"跳转到项目目录", hk3:"恢复 Claude Code 会话",
@@ -402,9 +406,22 @@ function setLang(lang) {
   document.querySelectorAll('[data-i18n-html]').forEach(el => {
     const key = el.getAttribute('data-i18n-html');
     if (T[lang][key] != null) {
-      // Sanitize: only allow safe tags, strip everything else
-      const safe = T[lang][key].replace(/<(?!\/?(?:code|kbd|em|br|span|strong)\b)[^>]+>/gi, '');
-      el.innerHTML = safe;
+      // DOM-based sanitization: parse HTML, strip unsafe tags and ALL attributes
+      const allowed = new Set(['code','kbd','em','br','span','strong']);
+      const tmp = document.createElement('div');
+      tmp.innerHTML = T[lang][key];
+      const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_ELEMENT);
+      const toReplace = [];
+      while(walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!allowed.has(node.tagName.toLowerCase())) {
+          toReplace.push(node);
+        } else {
+          while(node.attributes.length > 0) node.removeAttribute(node.attributes[0].name);
+        }
+      }
+      toReplace.forEach(n => n.replaceWith(document.createTextNode(n.textContent)));
+      el.innerHTML = tmp.innerHTML;
     }
   });
   document.querySelectorAll('.i18n-img').forEach(img => {
@@ -421,7 +438,7 @@ function setLang(lang) {
   const ogTitle = document.querySelector('meta[property="og:title"]');
   const ogDesc = document.querySelector('meta[property="og:description"]');
   if (ogTitle) ogTitle.content = lang === 'zh' ? 'proj — Vibe Coder 的终端项目管理器' : 'proj — Terminal Project Manager for Vibe Coders';
-  if (ogDesc) ogDesc.content = lang === 'zh' ? '项目太多？任何一个，3秒无缝接续。AI 扫描代码、追踪进展、恢复 Claude 会话。' : 'Too many projects? Pick up any of them in 3 seconds. AI scans your code, tracks progress, and resumes Claude sessions.';
+  if (ogDesc) ogDesc.content = lang === 'zh' ? '项目太多？任意一个，3秒接上上下文。Claude 扫描代码、追踪进展、恢复会话。' : 'Too many projects? Pick up any of them in 3 seconds. Claude scans your code. proj tracks progress and resumes sessions.';
 }
 
 function setTheme(theme) {
@@ -471,9 +488,15 @@ function showToast(msg) {
   if (cmd) {
     const handler = () => {
       const lang = document.documentElement.getAttribute('data-lang') || 'en';
-      navigator.clipboard.writeText('git clone https://github.com/doctormin/proj && cd proj && ./install.sh')
-        .then(() => showToast(T[lang].copy_ok))
-        .catch(() => showToast(T[lang].copy_fail));
+      const text = 'git clone https://github.com/doctormin/proj.git ~/.proj-repo && ~/.proj-repo/install.sh';
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => showToast(T[lang].copy_ok), () => showToast(T[lang].copy_fail));
+      } else {
+        const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;opacity:0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); showToast(T[lang].copy_ok); } catch(e) { showToast(T[lang].copy_fail); }
+        document.body.removeChild(ta);
+      }
     };
     cmd.addEventListener('click', handler);
     cmd.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') handler(); });

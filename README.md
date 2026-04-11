@@ -5,9 +5,9 @@
 **`zoxide` helps you `cd` faster. `proj` helps you remember what you were doing.**
 
 Too many projects. Pick up any of them in 3 seconds.
-AI scans your code, tracks progress and TODO, resumes your Claude Code sessions.
+Claude scans your code. proj tracks progress/TODO and helps you resume Claude Code sessions.
 
-**~1000 lines of shell. No binary. No runtime. Loads in <50ms.**
+**~1500 lines of shell. No binary. No Node/Python/Go runtime. Loads in milliseconds.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Shell: zsh](https://img.shields.io/badge/Shell-zsh-blue.svg)](#requirements)
@@ -15,10 +15,7 @@ AI scans your code, tracks progress and TODO, resumes your Claude Code sessions.
 [![AI: Claude Code](https://img.shields.io/badge/AI-Claude%20Code-blueviolet.svg)](https://docs.anthropic.com/en/docs/claude-code)
 [![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-blue.svg)](#)
 
-[Features](#features) · [Why not X?](#why-not-x) · [Install](#install) · [Usage](#usage) · [Privacy](#privacy)
-
-<!-- TODO: Replace with demo GIF when available -->
-<!-- ![proj demo](docs/demo.gif) -->
+[Features](#features) · [Install](#install) · [Why not X?](#why-not-x) · [Usage](#usage) · [Privacy](#privacy)
 
 </div>
 
@@ -35,7 +32,7 @@ When you vibe-code across many projects, you lose context fast:
 
 ## The Fix
 
-`proj add` in any project directory. Claude Code scans your codebase and writes the summary for you:
+Run `proj add`, and Claude writes the summary for you:
 
 ![proj add — Claude scans and generates project summary](docs/screenshot-add-en.png)
 
@@ -45,33 +42,16 @@ Then type `proj` (or `Ctrl+P` from anywhere) — see progress, TODO, and Claude 
 
 ## Features
 
-- **AI-Generated Progress & TODO** — `proj add` and Claude writes the summary, progress, and TODO for you. Never write project notes yourself
-- **Fuzzy Find & Jump** — `Ctrl+P` from anywhere, fuzzy search, Enter to `cd` right in
-- **Resume Claude Code Sessions** — One keystroke to pick up the exact Claude Code conversation. Preview shows session history and summaries
+- **AI-Generated Progress & TODO** — Run `proj add`, and Claude writes the summary, progress, and TODO for you. Never write project notes yourself
+- **Fuzzy Find & Jump** — `Ctrl+P` from anywhere, fuzzy search, press Enter to jump straight in
+- **Resume Claude Code Sessions** — One keystroke to resume your most recent Claude Code session. Preview shows session history and summaries
 - **Remote Project Tracking** — `proj add-remote` to track projects on remote servers. `Enter` to SSH jump, metadata synced locally
 - **Multi-Machine Sync** — `proj sync` to keep all project metadata in sync across machines via a private git repo
 - **Meta Session** — `proj meta` launches an AI advisor that knows all your projects. Ask "which project should I work on next?"
 - **Claude Status Detection** — Preview panel shows whether Claude Code is actively running for each project
 - **Status Tracking** — `active` / `paused` / `blocked` / `done`, your prompt shows the count via Starship
-- **Lightweight & Fast** — ~30 KB total, loads in <50ms. Pure `zsh` shell script, no binary, no daemon, no background process. Plain text data you can `cat`, `grep`, or `git diff`
+- **Lightweight & Fast** — ~1500 lines, under 50 KB. Loads in milliseconds. Pure `zsh` shell script, no binary, no daemon, no background process. Plain text data you can `cat`, `grep`, or `git diff`
 - **Cross-Platform** — macOS + Linux. Tab completion, `starship` integration, i18n (English / 中文)
-
-## Why not X?
-
-| | **proj** | zoxide | tmuxinator | Agent Deck |
-|---|----------|--------|------------|------------|
-| AI project summary | Yes | — | — | — |
-| Progress & TODO tracking | Yes | — | — | — |
-| Claude session resume | Yes | — | — | Partial |
-| Remote server projects | Yes | — | — | Yes |
-| Multi-machine sync | Yes | — | — | — |
-| AI project advisor | Yes | — | — | — |
-| **Install size** | **~30 KB** | ~1 MB | ~5 MB | ~15 MB |
-| **Startup overhead** | **<50ms** | <10ms | ~200ms | ~300ms |
-| **Dependencies** | `zsh` + `fzf` | none | Ruby | Go + tmux |
-| Compile step | none | Rust build | gem install | Go build |
-
-**TL;DR:** `zoxide` helps you `cd` faster. `proj` helps you *remember what you were doing*. And it's just a shell script — nothing to compile, nothing to break.
 
 ## Requirements
 
@@ -113,6 +93,23 @@ proj   # or Ctrl+P from anywhere
 ~/.proj-repo/uninstall.sh        # Remove plugin, keep project data
 ~/.proj-repo/uninstall.sh --all  # Remove everything
 ```
+
+## Why not X?
+
+These are excellent adjacent tools, not direct substitutes.
+
+| | **proj** | zoxide | tmuxinator | Agent Deck |
+|---|----------|--------|------------|------------|
+| Jump to project directories | Yes | Yes | — | Partial |
+| AI project summary | Yes | — | — | — |
+| Progress & TODO tracking | Yes | — | — | — |
+| Claude session resume | Yes | — | — | Partial |
+| Remote server projects | Yes | — | — | Yes |
+| Multi-machine sync | Yes | — | — | — |
+| AI project advisor | Yes | — | — | — |
+| Core dependency model | `zsh` + `fzf` | Rust binary (~2 MB) | Ruby runtime (~50 MB) | Go binary + tmux |
+
+**TL;DR:** `zoxide` helps you `cd` faster. `proj` helps you *remember what you were doing*. And it's just a shell script — nothing to compile, very little to maintain. proj fills the gap none of them cover.
 
 ## Usage
 
@@ -199,7 +196,7 @@ Config is stored in `~/.proj/config`.
 ├── schema_version                # Data format version
 ├── version                       # Installed version
 ├── meta/                         # Meta Session working directory
-│   └── CLAUDE.md                 # Auto-generated project context
+│   └── CLAUDE.md                 # Auto-generated project context (updated on `proj meta`)
 └── data/
     └── <project-name>/
         ├── path.<machine-id>     # Local path (per-machine)
@@ -217,11 +214,12 @@ Plain text files. No database. Easy to backup, sync, or edit by hand.
 
 ## Privacy
 
-- **All project metadata stays local** in `~/.proj/` — plain text files you can read, edit, or delete anytime
-- **AI scanning** uses the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code). When you run `proj add`, your code is sent to Anthropic's API for analysis (same as using Claude Code directly). See [Anthropic's data policy](https://www.anthropic.com/policies/privacy) for retention details. No data is sent to any third-party service
-- **Without Claude Code**, proj still works — you can manually add projects, set descriptions, jump between them, and manage status. AI features are optional
-- **Sync** pushes metadata only (descriptions, TODO, status) to a **private** git repo you control — no source code is ever synced
-- **No telemetry, no analytics, no tracking**. The install script copies two files and adds one line to `.zshrc`. That's it
+- **By default, project metadata stays local** in `~/.proj/` — plain text files you can read, edit, or delete anytime
+- **If you use Claude features**, your code is sent to Anthropic via the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) for analysis (same as using Claude Code directly). See [Anthropic's data policy](https://www.anthropic.com/policies/privacy) for retention details
+- **If you enable sync**, metadata only (descriptions, TODO, status) is pushed to a **private** git repo you control — no source code is ever synced
+- **Without Claude Code**, proj still works — you can manually add projects, set descriptions, jump between them, and manage status
+- **The install script** runs locally. It copies two files to `~/.proj/` and adds one line to `.zshrc`. No network calls, no telemetry, no sudo required
+- **No telemetry, no analytics, no tracking**
 
 ## Troubleshooting
 
