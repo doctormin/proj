@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/logo.svg" width="120" height="120" alt="proj logo">
+
 # proj
 
 **`zoxide` helps you `cd` faster. `proj` helps you remember what you were doing.**

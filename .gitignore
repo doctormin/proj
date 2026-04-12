@@ -8,6 +8,7 @@
 
 # Claude Code workflow
 .claude/
+CLAUDE.md
 HANDOFF.md
 docs/brainstorms/
 docs/plans/

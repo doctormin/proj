@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <filter id="g1blur">
+      <feGaussianBlur stdDeviation="2.5"/>
+    </filter>
+    <filter id="g2blur">
+      <feGaussianBlur stdDeviation="1.2"/>
+    </filter>
+  </defs>
+  <rect width="200" height="200" rx="32" fill="#0a0a0a"/>
+
+  <!-- Ghost 1: furthest -->
+  <g opacity="0.04" transform="translate(52, 34) scale(0.72)" filter="url(#g1blur)">
+    <rect x="72" y="44" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="84" y="44" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="96" y="44" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="108" y="44" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="72" y="56" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="120" y="56" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="72" y="68" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="120" y="68" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="72" y="80" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="84" y="80" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="96" y="80" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="108" y="80" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="72" y="92" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="72" y="104" width="12" height="12" fill="#6ee7b7"/>
+    <rect x="72" y="116" width="12" height="12" fill="#6ee7b7"/>
+  </g>
+
+  <!-- Ghost 2 -->
+  <g opacity="0.08" transform="translate(40, 26) scale(0.78)" filter="url(#g2blur)">
+    <rect x="72" y="44" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="84" y="44" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="96" y="44" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="108" y="44" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="72" y="56" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="120" y="56" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="72" y="68" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="120" y="68" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="72" y="80" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="84" y="80" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="96" y="80" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="108" y="80" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="72" y="92" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="72" y="104" width="12" height="12" fill="#5ee0b4"/>
+    <rect x="72" y="116" width="12" height="12" fill="#5ee0b4"/>
+  </g>
+
+  <!-- Ghost 3 -->
+  <g opacity="0.15" transform="translate(28, 18) scale(0.84)">
+    <rect x="72" y="44" width="12" height="12" fill="#40d9a4"/>
+    <rect x="84" y="44" width="12" height="12" fill="#40d9a4"/>
+    <rect x="96" y="44" width="12" height="12" fill="#40d9a4"/>
+    <rect x="108" y="44" width="12" height="12" fill="#40d9a4"/>
+    <rect x="72" y="56" width="12" height="12" fill="#40d9a4"/>
+    <rect x="120" y="56" width="12" height="12" fill="#40d9a4"/>
+    <rect x="72" y="68" width="12" height="12" fill="#40d9a4"/>
+    <rect x="120" y="68" width="12" height="12" fill="#40d9a4"/>
+    <rect x="72" y="80" width="12" height="12" fill="#40d9a4"/>
+    <rect x="84" y="80" width="12" height="12" fill="#40d9a4"/>
+    <rect x="96" y="80" width="12" height="12" fill="#40d9a4"/>
+    <rect x="108" y="80" width="12" height="12" fill="#40d9a4"/>
+    <rect x="72" y="92" width="12" height="12" fill="#40d9a4"/>
+    <rect x="72" y="104" width="12" height="12" fill="#40d9a4"/>
+    <rect x="72" y="116" width="12" height="12" fill="#40d9a4"/>
+  </g>
+
+  <!-- Ghost 4 -->
+  <g opacity="0.25" transform="translate(18, 11) scale(0.9)">
+    <rect x="72" y="44" width="12" height="12" fill="#36d69f"/>
+    <rect x="84" y="44" width="12" height="12" fill="#36d69f"/>
+    <rect x="96" y="44" width="12" height="12" fill="#36d69f"/>
+    <rect x="108" y="44" width="12" height="12" fill="#36d69f"/>
+    <rect x="72" y="56" width="12" height="12" fill="#36d69f"/>
+    <rect x="120" y="56" width="12" height="12" fill="#36d69f"/>
+    <rect x="72" y="68" width="12" height="12" fill="#36d69f"/>
+    <rect x="120" y="68" width="12" height="12" fill="#36d69f"/>
+    <rect x="72" y="80" width="12" height="12" fill="#36d69f"/>
+    <rect x="84" y="80" width="12" height="12" fill="#36d69f"/>
+    <rect x="96" y="80" width="12" height="12" fill="#36d69f"/>
+    <rect x="108" y="80" width="12" height="12" fill="#36d69f"/>
+    <rect x="72" y="92" width="12" height="12" fill="#36d69f"/>
+    <rect x="72" y="104" width="12" height="12" fill="#36d69f"/>
+    <rect x="72" y="116" width="12" height="12" fill="#36d69f"/>
+  </g>
+
+  <!-- Ghost 5 -->
+  <g opacity="0.4" transform="translate(8, 5) scale(0.95)">
+    <rect x="72" y="44" width="12" height="12" fill="#34d39b"/>
+    <rect x="84" y="44" width="12" height="12" fill="#34d39b"/>
+    <rect x="96" y="44" width="12" height="12" fill="#34d39b"/>
+    <rect x="108" y="44" width="12" height="12" fill="#34d39b"/>
+    <rect x="72" y="56" width="12" height="12" fill="#34d39b"/>
+    <rect x="120" y="56" width="12" height="12" fill="#34d39b"/>
+    <rect x="72" y="68" width="12" height="12" fill="#34d39b"/>
+    <rect x="120" y="68" width="12" height="12" fill="#34d39b"/>
+    <rect x="72" y="80" width="12" height="12" fill="#34d39b"/>
+    <rect x="84" y="80" width="12" height="12" fill="#34d39b"/>
+    <rect x="96" y="80" width="12" height="12" fill="#34d39b"/>
+    <rect x="108" y="80" width="12" height="12" fill="#34d39b"/>
+    <rect x="72" y="92" width="12" height="12" fill="#34d39b"/>
+    <rect x="72" y="104" width="12" height="12" fill="#34d39b"/>
+    <rect x="72" y="116" width="12" height="12" fill="#34d39b"/>
+  </g>
+
+  <!-- Main P: each pixel is a 3D block using stacked rects (light top-face, main face, dark bottom-face) -->
+  <!-- All highlights/shadows are INSIDE the 12x12 cell, no overflow -->
+
+  <!-- Row 1: ████ -->
+  <rect x="72" y="44" width="48" height="2" fill="#6ee7b7" opacity="0.5"/>
+  <rect x="72" y="46" width="48" height="8" fill="#34d399"/>
+  <rect x="72" y="54" width="48" height="2" fill="#059669" opacity="0.6"/>
+
+  <!-- Row 2 left: █ -->
+  <rect x="72" y="56" width="12" height="2" fill="#6ee7b7" opacity="0.4"/>
+  <rect x="72" y="58" width="12" height="8" fill="#34d399"/>
+  <rect x="72" y="66" width="12" height="2" fill="#059669" opacity="0.5"/>
+  <!-- Row 2 right: █ -->
+  <rect x="120" y="56" width="12" height="2" fill="#6ee7b7" opacity="0.35"/>
+  <rect x="120" y="58" width="12" height="8" fill="#34d399"/>
+  <rect x="120" y="66" width="12" height="2" fill="#059669" opacity="0.45"/>
+
+  <!-- Row 3 left: █ -->
+  <rect x="72" y="68" width="12" height="2" fill="#6ee7b7" opacity="0.35"/>
+  <rect x="72" y="70" width="12" height="8" fill="#34d399"/>
+  <rect x="72" y="78" width="12" height="2" fill="#059669" opacity="0.45"/>
+  <!-- Row 3 right: █ -->
+  <rect x="120" y="68" width="12" height="2" fill="#6ee7b7" opacity="0.3"/>
+  <rect x="120" y="70" width="12" height="8" fill="#34d399"/>
+  <rect x="120" y="78" width="12" height="2" fill="#059669" opacity="0.4"/>
+
+  <!-- Row 4: ████ -->
+  <rect x="72" y="80" width="48" height="2" fill="#6ee7b7" opacity="0.45"/>
+  <rect x="72" y="82" width="48" height="8" fill="#34d399"/>
+  <rect x="72" y="90" width="48" height="2" fill="#059669" opacity="0.55"/>
+
+  <!-- Row 5: █ -->
+  <rect x="72" y="92" width="12" height="2" fill="#6ee7b7" opacity="0.3"/>
+  <rect x="72" y="94" width="12" height="8" fill="#34d399"/>
+  <rect x="72" y="102" width="12" height="2" fill="#059669" opacity="0.4"/>
+
+  <!-- Row 6: █ -->
+  <rect x="72" y="104" width="12" height="2" fill="#6ee7b7" opacity="0.25"/>
+  <rect x="72" y="106" width="12" height="8" fill="#34d399"/>
+  <rect x="72" y="114" width="12" height="2" fill="#059669" opacity="0.35"/>
+
+  <!-- Row 7: █ -->
+  <rect x="72" y="116" width="12" height="2" fill="#6ee7b7" opacity="0.2"/>
+  <rect x="72" y="118" width="12" height="8" fill="#34d399"/>
+  <rect x="72" y="126" width="12" height="2" fill="#059669" opacity="0.3"/>
+
+  <!-- Cursor -->
+  <rect x="72" y="136" width="12" height="4" rx="1" fill="#34d399">
+    <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite"/>
+  </rect>
+</svg>
