@@ -99,6 +99,10 @@ _proj_i18n_en() {
     tag_removed        "✓ Removed from %s: %s"
     no_tags            "No tags yet. Try: proj tag <name> <tag>"
     no_tags_here       "This project has no tags."
+    tag_noop_add       "Already tagged:"
+    tag_noop_remove    "Not tagged:"
+    tag_write_failed   "Failed to write tag file."
+    tag_commit_failed  "Failed to commit tag update."
     help_tag           "Add tags to a project"
     help_untag         "Remove tags from a project"
     help_tags          "List all tags with counts"
@@ -220,6 +224,10 @@ _proj_i18n_zh() {
     tag_removed        "✓ 已从 %s 移除: %s"
     no_tags            "还没有标签。试试: proj tag <name> <tag>"
     no_tags_here       "此项目没有标签。"
+    tag_noop_add       "已经添加过:"
+    tag_noop_remove    "未被标记:"
+    tag_write_failed   "写入标签文件失败。"
+    tag_commit_failed  "提交标签更新失败。"
     help_tag           "为项目添加标签"
     help_untag         "移除项目的标签"
     help_tags          "列出所有标签及计数"
@@ -785,6 +793,26 @@ _proj_config_lang() {
 }
 
 # ── proj sync (git-based multi-machine sync) ──
+# Ensure history.log union merge driver is configured so concurrent
+# history appends from multiple machines merge instead of conflicting.
+# Idempotent: creates .gitattributes if missing, adds the line if absent.
+# Defensive: if an existing file lacks a trailing newline, add one before
+# appending — otherwise the new rule concatenates with the previous line,
+# silently corrupting the attribute file (and the corruption is sticky
+# because the idempotency grep would match the concatenated line).
+_proj_sync_ensure_gitattributes() {
+  local gaf="$PROJ_DATA/.gitattributes"
+  if [[ -f "$gaf" ]] && grep -qxF '*/history.log merge=union' "$gaf"; then
+    return 0
+  fi
+  if [[ -s "$gaf" ]]; then
+    local last_char
+    last_char=$(tail -c 1 "$gaf" 2>/dev/null)
+    [[ "$last_char" != $'\n' ]] && printf '\n' >> "$gaf"
+  fi
+  printf '%s\n' '*/history.log merge=union' >> "$gaf"
+}
+
 _proj_sync() {
   local repo=$(_proj_cfg_get sync_repo "")
   if [[ -z "$repo" ]]; then
@@ -794,17 +822,6 @@ _proj_sync() {
   fi
 
   local git_dir="$PROJ_DATA/.git"
-
-  # Ensure history.log union merge driver is configured so concurrent
-  # history appends from multiple machines merge instead of conflicting.
-  # Idempotent: creates .gitattributes if missing, adds the line if absent.
-  _proj_sync_ensure_gitattributes() {
-    local gaf="$PROJ_DATA/.gitattributes"
-    if [[ -f "$gaf" ]] && grep -qF '*/history.log merge=union' "$gaf"; then
-      return 0
-    fi
-    echo '*/history.log merge=union' >> "$gaf"
-  }
 
   if [[ ! -d "$git_dir" ]]; then
     # First sync — check if remote has content.
@@ -1279,10 +1296,15 @@ _proj_list() {
 
 # Parse "YYYY-MM-DD HH:MM" timestamp to epoch seconds.
 # Prints the epoch and returns 0 on success; returns 1 and prints nothing on failure.
-# Tries BSD date first (macOS), then GNU date (Linux).
+# Tries BSD date first (macOS), then GNU date (Linux). A strict shape
+# gate runs first so GNU date -d can't silently accept `now`, `1200`,
+# `next monday`, etc. — same pattern as _proj_history_ts_to_epoch.
 _proj_date_to_epoch() {
   local ts="$1"
   [[ -z "$ts" ]] && return 1
+  if ! [[ "$ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}$ ]]; then
+    return 1
+  fi
   local epoch
   if epoch=$(date -j -f "%Y-%m-%d %H:%M" "$ts" +%s 2>/dev/null) && [[ -n "$epoch" ]]; then
     echo "$epoch"
@@ -1717,6 +1739,11 @@ _proj_tag_valid() {
 }
 
 _proj_tag() {
+  # pipefail so a cat failure mid-pipeline is caught by the `if !` error
+  # gate below — otherwise a transient read error on $tag_file would
+  # silently replace the existing tags with only the new ones.
+  setopt local_options pipefail
+
   local name="$1"
   shift 2>/dev/null || true
   if [[ -z "$name" || $# -eq 0 ]]; then
@@ -1736,6 +1763,11 @@ _proj_tag() {
     fi
   done
 
+  # Dedupe args first so `proj tag foo work work` doesn't produce a
+  # phantom `+work +work` history entry.
+  local -a args
+  args=(${(u)@})
+
   local tag_file="$PROJ_DATA/$name/tags"
 
   # Compute what's actually new so we don't bump `updated` or log a
@@ -1745,27 +1777,27 @@ _proj_tag() {
   if [[ -f "$tag_file" ]]; then
     existing=("${(@f)$(<"$tag_file")}")
   fi
-  for t in "$@"; do
+  for t in "${args[@]}"; do
     if [[ " ${existing[*]} " != *" $t "* ]]; then
       new_tags+=("$t")
     fi
   done
 
   if (( ${#new_tags[@]} == 0 )); then
-    echo "${_pc_dim}Already tagged: $*${_pc_reset}"
+    echo "${_pc_dim}${_i[tag_noop_add]} $*${_pc_reset}"
     return 0
   fi
 
   local tmpf="$tag_file.tmp"
-  if ! { [[ -f "$tag_file" ]] && cat "$tag_file"; printf '%s\n' "$@"; } \
+  if ! { [[ -f "$tag_file" ]] && cat "$tag_file"; printf '%s\n' "${args[@]}"; } \
        | grep -v '^$' | sort -u > "$tmpf"; then
     rm -f "$tmpf"
-    echo "${_pc_red}Failed to write tag file${_pc_reset}"
+    echo "${_pc_red}${_i[tag_write_failed]}${_pc_reset}"
     return 1
   fi
   if ! mv "$tmpf" "$tag_file"; then
     rm -f "$tmpf"
-    echo "${_pc_red}Failed to commit tag update${_pc_reset}"
+    echo "${_pc_red}${_i[tag_commit_failed]}${_pc_reset}"
     return 1
   fi
 
@@ -1800,6 +1832,11 @@ _proj_untag() {
     fi
   done
 
+  # Dedupe args so `proj untag foo work work` doesn't produce a phantom
+  # `-work -work` history entry.
+  local -a args
+  args=(${(u)@})
+
   local tag_file="$PROJ_DATA/$name/tags"
   if [[ ! -f "$tag_file" ]]; then
     echo "${_pc_dim}${_i[no_tags_here]}${_pc_reset}"
@@ -1810,22 +1847,21 @@ _proj_untag() {
   # untag calls that target tags the project doesn't have.
   local -a existing removed_tags
   existing=("${(@f)$(<"$tag_file")}")
-  local arg
-  for arg in "$@"; do
-    if [[ " ${existing[*]} " == *" $arg "* ]]; then
-      removed_tags+=("$arg")
+  for t in "${args[@]}"; do
+    if [[ " ${existing[*]} " == *" $t "* ]]; then
+      removed_tags+=("$t")
     fi
   done
 
   if (( ${#removed_tags[@]} == 0 )); then
-    echo "${_pc_dim}Not tagged: $*${_pc_reset}"
+    echo "${_pc_dim}${_i[tag_noop_remove]} $*${_pc_reset}"
     return 0
   fi
 
   local tmpf="$tag_file.tmp"
   # grep -vFxf: filter out lines that literally match any input line.
   # Exit 1 when all lines filtered (no output) — absorb with || true.
-  grep -vFxf <(printf '%s\n' "$@") "$tag_file" > "$tmpf" 2>/dev/null || true
+  grep -vFxf <(printf '%s\n' "${args[@]}") "$tag_file" > "$tmpf" 2>/dev/null || true
 
   if [[ -s "$tmpf" ]]; then
     mv "$tmpf" "$tag_file"

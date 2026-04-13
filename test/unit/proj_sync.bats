@@ -156,6 +156,45 @@ setup_git_identity() {
   assert_output --partial "*/history.log merge=union"
 }
 
+@test "proj sync helper handles .gitattributes without trailing newline" {
+  # Adversarial regression: if the existing .gitattributes lacks a
+  # trailing newline, `echo >>` would concatenate the new rule with the
+  # previous line, silently corrupting the attribute file AND making the
+  # idempotency check sticky.
+  setup_git_identity
+  mkdir -p "$HOME/workspace/p"
+  run proj add p "$HOME/workspace/p"
+
+  local url
+  url=$(make_bare_repo "$HOME/remote.git")
+  set_sync_repo "$url"
+  run proj_yes sync
+  assert_success
+
+  # Put a pre-existing rule WITHOUT trailing newline into .gitattributes,
+  # then invoke the helper directly and verify the result.
+  printf '*.png binary' > "$HOME/.proj/data/.gitattributes"
+  run bash -c "zsh -c 'source \"$PROJ_ROOT/proj.zsh\" && _proj_sync_ensure_gitattributes'"
+  assert_success
+
+  # Expect two clean lines, no concatenation
+  local line1 line2
+  line1=$(sed -n '1p' "$HOME/.proj/data/.gitattributes")
+  line2=$(sed -n '2p' "$HOME/.proj/data/.gitattributes")
+  assert_equal "$line1" "*.png binary"
+  assert_equal "$line2" "*/history.log merge=union"
+
+  # Verify git itself agrees the attribute applies to history.log
+  cd "$HOME/.proj/data"
+  git add -A >/dev/null
+  git commit -q -m "update gaf" 2>/dev/null || true
+  mkdir -p foo && printf 'x\n' > foo/history.log
+  git add -A >/dev/null
+  git commit -q -m test 2>/dev/null || true
+  run git check-attr merge -- foo/history.log
+  assert_output --partial "merge: union"
+}
+
 @test "proj sync subsequent push adds .gitattributes if missing (v1 upgrade path)" {
   # Users who first-synced under v1 have a data repo with no
   # .gitattributes. The next sync after upgrading should add it

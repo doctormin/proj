@@ -129,6 +129,33 @@ _add() {
   assert_output --partial "Invalid tag"
 }
 
+@test "proj tag: duplicate args are deduped (no +work +work in history)" {
+  _add foo
+
+  run proj tag foo work work work
+  assert_success
+
+  local log="$(proj_data_dir)/foo/history.log"
+  # History should show a single `+work`, not `+work +work +work`
+  local detail
+  detail=$(grep '|tag|' "$log" | head -1 | cut -d'|' -f3)
+  assert_equal "$detail" "+work"
+}
+
+@test "proj untag: duplicate args are deduped (no -work -work in history)" {
+  _add foo
+  proj tag foo work >/dev/null
+
+  run proj untag foo work work work
+  assert_success
+
+  local log="$(proj_data_dir)/foo/history.log"
+  # Last tag event should show a single `-work`
+  local detail
+  detail=$(grep '|tag|' "$log" | tail -1 | cut -d'|' -f3)
+  assert_equal "$detail" "-work"
+}
+
 @test "proj tag: re-adding existing tag is a no-op (no bump, no history event)" {
   _add foo
   proj tag foo work >/dev/null
