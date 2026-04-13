@@ -418,8 +418,12 @@ _proj_add_remote() {
     return 1
   fi
 
-  # Validate path: reject shell metacharacters
-  if [[ "$rpath" =~ [\$\`\;|\&] || "$rpath" =~ \.\. ]]; then
+  # Validate path: reject shell metacharacters.
+  # Use a single-quoted pattern variable so the backtick is a literal char
+  # class member rather than an unterminated command-substitution opener —
+  # the inline form parses under interactive zsh but fails under `zsh -c`.
+  local _rpath_meta='[`$;|&]'
+  if [[ "$rpath" =~ $_rpath_meta || "$rpath" =~ '\.\.' ]]; then
     echo "${_pc_red}Invalid path: contains unsafe characters${_pc_reset}"
     return 1
   fi
@@ -739,9 +743,12 @@ _proj_sync() {
   local git_dir="$PROJ_DATA/.git"
 
   if [[ ! -d "$git_dir" ]]; then
-    # First sync — check if remote has content
+    # First sync — check if remote has content.
+    # `git ls-remote "$repo" HEAD` exits 0 even for a truly empty bare repo,
+    # so we must inspect the output (refs) to distinguish "first machine"
+    # from "second machine joining an existing sync".
     local has_remote=0
-    git ls-remote "$repo" HEAD &>/dev/null && has_remote=1
+    [[ -n "$(git ls-remote "$repo" 2>/dev/null)" ]] && has_remote=1
 
     if [[ $has_remote -eq 1 ]]; then
       # Mode 2: Second machine — clone + merge local
