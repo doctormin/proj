@@ -126,6 +126,17 @@ _proj_i18n_en() {
     clone_name_collision "A project named '%s' already exists. Rename or remove it before re-cloning."
     clone_bad_target   "Refusing target path that begins with '-' (would be parsed as a git option): %s"
     clone_mkdir_failed "Cannot create parent directory: %s"
+    export_no_jq       "proj export needs jq. Install it: brew install jq (or your package manager)."
+    export_saved       "✓ Exported %s projects → %s"
+    export_write_failed "Failed to write export file: %s"
+    usage_import_json  "Usage: proj import <file.json> [--force]"
+    import_bad_json    "Not a valid proj export file (missing .projects array): %s"
+    import_skip_invalid "Skipping entry with invalid name: '%s'"
+    import_skip_exists "Skipping existing project: '%s' (use --force to overwrite)"
+    import_json_done   "Import complete: %s imported, %s skipped, %s overwritten."
+    import_no_zoxide   "proj import zoxide needs zoxide installed and populated."
+    import_zoxide_empty "zoxide returned no usable directories."
+    help_export        "Export all projects to a JSON file (or stdout)"
 
     # ── interactive panel ──
     panel_title        " 📋 Projects "
@@ -267,6 +278,17 @@ _proj_i18n_zh() {
     clone_name_collision "已经存在同名项目 '%s'。请先重命名或删除再重新克隆。"
     clone_bad_target   "目标路径以 '-' 开头会被 git 解析为选项，已拒绝: %s"
     clone_mkdir_failed "无法创建父目录: %s"
+    export_no_jq       "proj export 需要 jq。请先安装: brew install jq（或使用你的包管理器）。"
+    export_saved       "✓ 已导出 %s 个项目 → %s"
+    export_write_failed "写入导出文件失败: %s"
+    usage_import_json  "用法: proj import <file.json> [--force]"
+    import_bad_json    "不是合法的 proj 导出文件（缺少 .projects 数组）: %s"
+    import_skip_invalid "跳过名称非法的条目: '%s'"
+    import_skip_exists "跳过已有项目: '%s'（使用 --force 覆盖）"
+    import_json_done   "导入完成: 新增 %s 个，跳过 %s 个，覆盖 %s 个。"
+    import_no_zoxide   "proj import zoxide 需要已安装并有数据的 zoxide。"
+    import_zoxide_empty "zoxide 没有返回可用的目录。"
+    help_export        "将所有项目导出为 JSON 文件（或写到 stdout）"
 
     # ── 交互面板 ──
     panel_title        " 📋 项目面板 "
@@ -1380,7 +1402,8 @@ proj() {
     config|cfg) _proj_config "$@" ;;
     count)     _proj_active_count ;;
     stale)     _proj_stale "$@" ;;
-    import)    _proj_import_dir "$@" ;;
+    import)    _proj_import "$@" ;;
+    export)    _proj_export "$@" ;;
     tag)       _proj_tag "$@" ;;
     untag)     _proj_untag "$@" ;;
     tags)      _proj_tags_list "$@" ;;
@@ -1408,7 +1431,8 @@ proj() {
       echo "  ${_pc_cyan}proj edit <name> <field> <val>${_pc_reset}  ${_i[help_edit]}"
       echo "  ${_pc_cyan}proj list [active|done]${_pc_reset}       ${_i[help_list]}"
       echo "  ${_pc_cyan}proj stale [days]${_pc_reset}            ${_i[help_stale]}"
-      echo "  ${_pc_cyan}proj import [dir]${_pc_reset}            ${_i[help_import]}"
+      echo "  ${_pc_cyan}proj import [dir|file.json|zoxide]${_pc_reset}  ${_i[help_import]}"
+      echo "  ${_pc_cyan}proj export [file]${_pc_reset}           ${_i[help_export]}"
       echo "  ${_pc_cyan}proj tag <name> <tag...>${_pc_reset}     ${_i[help_tag]}"
       echo "  ${_pc_cyan}proj untag <name> <tag...>${_pc_reset}   ${_i[help_untag]}"
       echo "  ${_pc_cyan}proj tags${_pc_reset}                    ${_i[help_tags]}"
@@ -2324,6 +2348,250 @@ _proj_import_dir() {
   fi
 }
 
+# ── proj export (JSON) ──
+# Serialize every project to a JSON array. Used for backup and
+# cross-machine migration. The schema_version field lets future
+# importers detect format changes.
+#
+# Output shape:
+#   {
+#     "schema_version": "2",
+#     "exported_at": "2026-04-13T16:00:00Z",
+#     "projects": [ { name, type, status, path, desc, progress, todo,
+#                     updated, host, remote_path, tags, has_history }, ... ]
+#   }
+#
+# `path` stores this-machine's resolved path. `has_history` is a boolean
+# flag (history.log contents are intentionally excluded to keep exports
+# small — a round-trip restore on another machine starts fresh history).
+_proj_export() {
+  local out_file="$1"
+
+  if ! (( ${+commands[jq]} )); then
+    echo "${_pc_red}${_i[export_no_jq]}${_pc_reset}"
+    return 1
+  fi
+
+  local -a names=("${(@f)$(_proj_names)}")
+  local sv="2"
+  [[ -f "$PROJ_DIR/schema_version" ]] \
+    && sv="$(tr -d '[:space:]' < "$PROJ_DIR/schema_version" 2>/dev/null)"
+
+  # Build one JSON object per project, then wrap into the final doc.
+  local json
+  json="$(
+    {
+      local n ptype status_ updated_ desc_ progress_ todo_ path_ host_ rpath_ tags_ has_history
+      for n in "${names[@]}"; do
+        [[ -z "$n" ]] && continue
+        ptype=$(_proj_get "$n" "type")
+        status_=$(_proj_get "$n" "status")
+        updated_=$(_proj_get "$n" "updated")
+        desc_=$(_proj_get "$n" "desc")
+        progress_=$(_proj_get "$n" "progress")
+        todo_=$(_proj_get "$n" "todo")
+        path_=$(_proj_get "$n" "path")
+        host_=$(_proj_get "$n" "host")
+        rpath_=$(_proj_get "$n" "remote_path")
+        tags_=""
+        [[ -f "$PROJ_DATA/$n/tags" ]] && tags_="$(<"$PROJ_DATA/$n/tags")"
+        has_history=false
+        [[ -f "$PROJ_DATA/$n/history.log" ]] && has_history=true
+
+        jq -n \
+          --arg name "$n" \
+          --arg type "$ptype" \
+          --arg status "$status_" \
+          --arg updated "$updated_" \
+          --arg desc "$desc_" \
+          --arg progress "$progress_" \
+          --arg todo "$todo_" \
+          --arg path "$path_" \
+          --arg host "$host_" \
+          --arg remote_path "$rpath_" \
+          --arg tags "$tags_" \
+          --argjson has_history "$has_history" \
+          '{name:$name, type:$type, status:$status, updated:$updated,
+            desc:$desc, progress:$progress, todo:$todo,
+            path:$path, host:$host, remote_path:$remote_path,
+            tags: ($tags | split("\n") | map(select(length>0))),
+            has_history: $has_history}'
+      done
+    } | jq -s --arg sv "$sv" \
+        '{schema_version:$sv, exported_at:(now|todate), projects:.}'
+  )" || return 1
+
+  if [[ -n "$out_file" ]]; then
+    if ! print -r -- "$json" > "$out_file"; then
+      echo "${_pc_red}$(_t export_write_failed "$out_file")${_pc_reset}"
+      return 1
+    fi
+    echo "${_pc_green}$(_t export_saved "${#names[@]}" "$out_file")${_pc_reset}"
+  else
+    print -r -- "$json"
+  fi
+}
+
+# ── proj import (dispatcher) ──
+# Route the import subcommand based on the first non-flag argument:
+#   zoxide           → _proj_import_zoxide (seed from zoxide DB)
+#   file ending .json → _proj_import_json  (restore from export)
+#   anything else    → _proj_import_dir    (scan directory, B2 path)
+_proj_import() {
+  local first_pos="" a
+  for a in "$@"; do
+    [[ "$a" == --* ]] && continue
+    first_pos="$a"
+    break
+  done
+
+  if [[ "$first_pos" == "zoxide" ]]; then
+    _proj_import_zoxide "$@"
+    return $?
+  fi
+  if [[ -n "$first_pos" && -f "$first_pos" && "$first_pos" == *.json ]]; then
+    _proj_import_json "$@"
+    return $?
+  fi
+  _proj_import_dir "$@"
+}
+
+# ── proj import <file.json> ──
+_proj_import_json() {
+  local file="" force=0 a
+  for a in "$@"; do
+    case "$a" in
+      --force) force=1 ;;
+      --*) echo "${_pc_red}${_i[usage_import_json]}${_pc_reset}"; return 1 ;;
+      *) [[ -z "$file" ]] && file="$a" ;;
+    esac
+  done
+
+  if [[ -z "$file" ]]; then
+    echo "${_pc_red}${_i[usage_import_json]}${_pc_reset}"
+    return 1
+  fi
+  if [[ ! -f "$file" ]]; then
+    echo "${_pc_red}$(_t dir_not_exist "$file")${_pc_reset}"
+    return 1
+  fi
+  if ! (( ${+commands[jq]} )); then
+    echo "${_pc_red}${_i[export_no_jq]}${_pc_reset}"
+    return 1
+  fi
+
+  # Validate top-level structure.
+  if ! jq -e '.projects | type == "array"' "$file" >/dev/null 2>&1; then
+    echo "${_pc_red}$(_t import_bad_json "$file")${_pc_reset}"
+    return 1
+  fi
+
+  local imported=0 skipped=0 overwritten=0 proj_json
+  while IFS= read -r proj_json; do
+    local name type_ status_ updated_ desc_ progress_ todo_ path_ host_ rpath_
+    name=$(print -r -- "$proj_json" | jq -r '.name // ""')
+    if [[ -z "$name" ]] \
+       || [[ ! "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+      echo "${_pc_yellow}$(_t import_skip_invalid "$name")${_pc_reset}"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    local was_present=0
+    if _proj_exists "$name"; then
+      if (( ! force )); then
+        echo "${_pc_yellow}$(_t import_skip_exists "$name")${_pc_reset}"
+        skipped=$((skipped + 1))
+        continue
+      fi
+      was_present=1
+    fi
+
+    type_=$(print -r -- "$proj_json" | jq -r '.type // "local"')
+    status_=$(print -r -- "$proj_json" | jq -r '.status // "active"')
+    updated_=$(print -r -- "$proj_json" | jq -r '.updated // ""')
+    desc_=$(print -r -- "$proj_json" | jq -r '.desc // ""')
+    progress_=$(print -r -- "$proj_json" | jq -r '.progress // ""')
+    todo_=$(print -r -- "$proj_json" | jq -r '.todo // ""')
+    path_=$(print -r -- "$proj_json" | jq -r '.path // ""')
+    host_=$(print -r -- "$proj_json" | jq -r '.host // ""')
+    rpath_=$(print -r -- "$proj_json" | jq -r '.remote_path // ""')
+
+    _proj_set "$name" "type" "$type_"
+    _proj_set "$name" "status" "$status_"
+    [[ -n "$updated_" ]] && _proj_set "$name" "updated" "$updated_"
+    _proj_set "$name" "desc" "$desc_"
+    _proj_set "$name" "progress" "$progress_"
+    _proj_set "$name" "todo" "$todo_"
+    [[ -n "$path_" ]] && _proj_set "$name" "path" "$path_"
+    [[ -n "$host_" ]] && _proj_set "$name" "host" "$host_"
+    [[ -n "$rpath_" ]] && _proj_set "$name" "remote_path" "$rpath_"
+
+    # Tags: overwrite from the JSON list (empty list → remove tags file).
+    local tags_count
+    tags_count=$(print -r -- "$proj_json" | jq -r '.tags | length')
+    if (( tags_count > 0 )); then
+      mkdir -p "$PROJ_DATA/$name"
+      print -r -- "$proj_json" | jq -r '.tags[]' > "$PROJ_DATA/$name/tags"
+    else
+      rm -f "$PROJ_DATA/$name/tags" 2>/dev/null
+    fi
+
+    (( was_present )) && overwritten=$((overwritten + 1))
+    imported=$((imported + 1))
+  done < <(jq -c '.projects[]' "$file")
+
+  echo "${_pc_green}$(_t import_json_done "$imported" "$skipped" "$overwritten")${_pc_reset}"
+}
+
+# ── proj import zoxide ──
+# Seed proj from a user's zoxide database. Interactive — prompts for each
+# candidate directory so users stay in control.
+_proj_import_zoxide() {
+  if ! (( ${+commands[zoxide]} )); then
+    echo "${_pc_red}${_i[import_no_zoxide]}${_pc_reset}"
+    return 1
+  fi
+
+  local -a candidates=()
+  local score path_
+  while read -r score path_; do
+    [[ -z "$path_" ]] && continue
+    # Skip $HOME itself, dotfile paths, and system paths.
+    [[ "$path_" == "$HOME" ]] && continue
+    [[ "$(basename "$path_")" == .* ]] && continue
+    [[ "$path_" == /tmp/* || "$path_" == /var/* || "$path_" == /usr/* ]] && continue
+    [[ ! -d "$path_" ]] && continue
+    candidates+=("$path_")
+    (( ${#candidates} >= 20 )) && break
+  done < <(zoxide query --list --score 2>/dev/null)
+
+  if (( ${#candidates} == 0 )); then
+    echo "${_pc_yellow}${_i[import_zoxide_empty]}${_pc_reset}"
+    return 0
+  fi
+
+  local added=0 skipped=0 p name ans
+  for p in "${candidates[@]}"; do
+    name="$(basename "$p")"
+    if [[ ! "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+      skipped=$((skipped + 1))
+      continue
+    fi
+    if _proj_exists "$name"; then
+      skipped=$((skipped + 1))
+      continue
+    fi
+    print -n "Import $p as project $name? [y/N] "
+    read -r ans
+    if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
+      _proj_add "$name" "$p"
+      added=$((added + 1))
+    fi
+  done
+  echo "${_pc_green}$(_t import_done "$added" "$skipped")${_pc_reset}"
+}
+
 # ── proj go ──
 _proj_go() {
   local target="$1"
@@ -2458,7 +2726,7 @@ _proj_code() {
 # ── Tab 补全 ──
 _proj_completion() {
   local -a subcmds projects
-  subcmds=(add rm list go cc code scan status edit config count stale import tag untag tags doctor history help)
+  subcmds=(add rm list go cc code scan status edit config count stale import export tag untag tags doctor history help)
 
   if [[ $CURRENT -eq 2 ]]; then
     _describe 'command' subcmds
