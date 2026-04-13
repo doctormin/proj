@@ -1,0 +1,4 @@
+#!/bin/sh
+# Mock Sublime Text for bats tests.
+echo "subl $*" >> "${EDITOR_CALLS_LOG:-/dev/null}"
+exit 0

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Mock Cursor for bats tests.
+echo "cursor $*" >> "${EDITOR_CALLS_LOG:-/dev/null}"
+exit 0

@@ -110,6 +110,12 @@ _proj_i18n_en() {
     usage_history      "Usage: proj history <name> [--all]"
     no_history         "No history recorded for this project yet."
     help_history       "Show timeline of status/edit/tag events"
+    usage_code         "Usage: proj code [name]  (auto-detects from cwd if name omitted)"
+    code_no_match      "No project matches the current directory. Run: proj code <name>"
+    code_remote        "Remote projects cannot be opened in a local editor. SSH first: proj go %s"
+    code_no_editor     "Editor not found: %s. Set \$PROJ_EDITOR or install one of: code, cursor, subl"
+    code_opened        "→ Opened %s in %s"
+    help_code          "Open project in your editor (code/cursor/subl)"
 
     # ── interactive panel ──
     panel_title        " 📋 Projects "
@@ -235,6 +241,12 @@ _proj_i18n_zh() {
     usage_history      "用法: proj history <name> [--all]"
     no_history         "此项目还没有历史记录。"
     help_history       "查看项目的状态/编辑/标签事件时间线"
+    usage_code         "用法: proj code [name]  (省略 name 时从当前目录自动推断)"
+    code_no_match      "当前目录不属于任何项目。请运行: proj code <name>"
+    code_remote        "远端项目无法在本地编辑器打开。先通过 SSH 连接: proj go %s"
+    code_no_editor     "找不到编辑器: %s。请设置 \$PROJ_EDITOR 或安装以下之一: code, cursor, subl"
+    code_opened        "→ 已在 %s 中打开 %s"
+    help_code          "在你的编辑器中打开项目（code/cursor/subl）"
 
     # ── 交互面板 ──
     panel_title        " 📋 项目面板 "
@@ -1184,6 +1196,7 @@ proj() {
     ls|list)   _proj_list "$@" ;;
     go|cd)     _proj_go "$@" ;;
     cc|claude) _proj_cc "$@" ;;
+    code)      _proj_code "$@" ;;
     s|status)  _proj_status "$@" ;;
     scan)      _proj_scan "$@" ;;
     sync)      _proj_sync ;;
@@ -1214,6 +1227,7 @@ proj() {
       echo "  ${_pc_cyan}proj add [name] [path]${_pc_reset}        ${_i[help_add]}"
       echo "  ${_pc_cyan}proj rm <name>${_pc_reset}                ${_i[help_rm]}"
       echo "  ${_pc_cyan}proj cc [name]${_pc_reset}               ${_i[help_cc]}"
+      echo "  ${_pc_cyan}proj code [name]${_pc_reset}             ${_i[help_code]}"
       echo "  ${_pc_cyan}proj scan [name]${_pc_reset}             ${_i[help_scan]}"
       echo "  ${_pc_cyan}proj status <name> <...>${_pc_reset}     ${_i[help_status]}"
       echo "  ${_pc_cyan}proj edit <name> <field> <val>${_pc_reset}  ${_i[help_edit]}"
@@ -2185,10 +2199,79 @@ _proj_cc() {
   _proj_resume_claude "$target"
 }
 
+# ── proj code (open in editor) ──
+_proj_code() {
+  local target="$1"
+
+  # Auto-detect target from cwd if omitted. Prefer the longest matching
+  # project path so nested checkouts resolve to the inner project.
+  if [[ -z "$target" ]]; then
+    local cwd="$(pwd)" n npath best_name="" best_len=0
+    for n in $(_proj_names); do
+      npath=$(_proj_get "$n" "path")
+      [[ -z "$npath" ]] && continue
+      if [[ "$cwd" == "$npath" || "$cwd" == "$npath"/* ]]; then
+        if (( ${#npath} > best_len )); then
+          best_name="$n"; best_len=${#npath}
+        fi
+      fi
+    done
+    if [[ -z "$best_name" ]]; then
+      echo "${_pc_red}${_i[code_no_match]}${_pc_reset}"
+      return 1
+    fi
+    target="$best_name"
+  fi
+
+  if ! _proj_exists "$target"; then
+    echo "${_pc_red}$(_t proj_not_exist "$target")${_pc_reset}"
+    return 1
+  fi
+
+  local ptype; ptype=$(_proj_get "$target" "type")
+  if [[ "$ptype" == "remote" ]]; then
+    echo "${_pc_red}$(_t code_remote "$target")${_pc_reset}"
+    return 1
+  fi
+
+  local projpath; projpath=$(_proj_get "$target" "path")
+  if [[ -z "$projpath" || ! -d "$projpath" ]]; then
+    echo "${_pc_red}$(_t not_found "$target")${_pc_reset}"
+    return 1
+  fi
+
+  # Editor selection: $PROJ_EDITOR (explicit override) > code > cursor > subl.
+  local editor=""
+  if [[ -n "$PROJ_EDITOR" ]]; then
+    if command -v "$PROJ_EDITOR" &>/dev/null; then
+      editor="$PROJ_EDITOR"
+    else
+      echo "${_pc_red}$(_t code_no_editor "$PROJ_EDITOR")${_pc_reset}"
+      return 1
+    fi
+  else
+    local candidate
+    for candidate in code cursor subl; do
+      if command -v "$candidate" &>/dev/null; then
+        editor="$candidate"; break
+      fi
+    done
+    if [[ -z "$editor" ]]; then
+      echo "${_pc_red}$(_t code_no_editor "code/cursor/subl")${_pc_reset}"
+      return 1
+    fi
+  fi
+
+  "$editor" "$projpath" || return $?
+
+  _proj_set "$target" "updated" "$(date '+%Y-%m-%d %H:%M')"
+  echo "${_pc_cyan}$(_t code_opened "$target" "$editor")${_pc_reset}"
+}
+
 # ── Tab 补全 ──
 _proj_completion() {
   local -a subcmds projects
-  subcmds=(add rm list go cc scan status edit config count stale import tag untag tags doctor history help)
+  subcmds=(add rm list go cc code scan status edit config count stale import tag untag tags doctor history help)
 
   if [[ $CURRENT -eq 2 ]]; then
     _describe 'command' subcmds
@@ -2197,7 +2280,7 @@ _proj_completion() {
 
   if [[ $CURRENT -eq 3 ]]; then
     case "${words[2]}" in
-      go|cc|rm|remove|scan|status|edit|s|tag|untag|history)
+      go|cc|code|rm|remove|scan|status|edit|s|tag|untag|history)
         projects=(${(f)"$(_proj_names)"})
         _describe 'project' projects
         ;;

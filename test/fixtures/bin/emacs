@@ -1,0 +1,4 @@
+#!/bin/sh
+# Mock emacs for bats tests (for $PROJ_EDITOR override path).
+echo "emacs $*" >> "${EDITOR_CALLS_LOG:-/dev/null}"
+exit 0

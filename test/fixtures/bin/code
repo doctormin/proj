@@ -1,0 +1,5 @@
+#!/bin/sh
+# Mock VS Code for bats tests.
+# Logs invocation to $EDITOR_CALLS_LOG so tests can assert what was called.
+echo "code $*" >> "${EDITOR_CALLS_LOG:-/dev/null}"
+exit 0
