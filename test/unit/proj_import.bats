@@ -291,6 +291,20 @@ _add() {
   assert_output --partial "--depth must be a non-negative integer"
 }
 
+@test "proj import: rejects --depth above upper bound (prevents arithmetic overflow)" {
+  mkdir -p "$HOME/code"
+  run proj import "$HOME/code" --depth 99999999999999999999
+  assert_failure
+  assert_output --partial "--depth must be <= 20"
+}
+
+@test "proj import: rejects --depth 21 (one past bound)" {
+  mkdir -p "$HOME/code"
+  run proj import "$HOME/code" --depth 21
+  assert_failure
+  assert_output --partial "--depth must be <= 20"
+}
+
 @test "proj import: help text mentions import subcommand" {
   run proj help
   assert_success

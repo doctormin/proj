@@ -136,6 +136,61 @@ setup_git_identity() {
   export HOME="$old_home"
 }
 
+@test "proj sync first push creates .gitattributes with history.log merge=union" {
+  # Without this, concurrent history.log appends from two machines produce
+  # a git merge conflict on every sync pull. The union merge driver makes
+  # them auto-merge into a combined file.
+  setup_git_identity
+  mkdir -p "$HOME/workspace/p"
+  run proj add p "$HOME/workspace/p"
+
+  local url
+  url=$(make_bare_repo "$HOME/remote.git")
+  set_sync_repo "$url"
+
+  run proj_yes sync
+  assert_success
+
+  assert [ -f "$HOME/.proj/data/.gitattributes" ]
+  run cat "$HOME/.proj/data/.gitattributes"
+  assert_output --partial "*/history.log merge=union"
+}
+
+@test "proj sync subsequent push adds .gitattributes if missing (v1 upgrade path)" {
+  # Users who first-synced under v1 have a data repo with no
+  # .gitattributes. The next sync after upgrading should add it
+  # opportunistically so history.log merges work.
+  setup_git_identity
+  mkdir -p "$HOME/workspace/p"
+  run proj add p "$HOME/workspace/p"
+
+  local url
+  url=$(make_bare_repo "$HOME/remote.git")
+  set_sync_repo "$url"
+
+  run proj_yes sync
+  assert_success
+
+  # Simulate a v1 sync repo by deleting the .gitattributes file in-place
+  # and committing the removal
+  cd "$HOME/.proj/data"
+  rm .gitattributes
+  git add -A
+  git commit -q -m "simulate v1 state"
+  git push -q origin main
+  cd - >/dev/null
+
+  # Trigger another sync
+  run proj status p paused
+  run proj sync
+  assert_success
+
+  # .gitattributes should have been re-created by ensure helper
+  assert [ -f "$HOME/.proj/data/.gitattributes" ]
+  run cat "$HOME/.proj/data/.gitattributes"
+  assert_output --partial "*/history.log merge=union"
+}
+
 @test "sync data directory excludes dotfiles from _proj_names listing" {
   setup_git_identity
 

@@ -639,6 +639,7 @@ _proj_status() {
   esac
   local old_st
   old_st=$(_proj_get "$name" "status")
+  [[ -z "$old_st" ]] && old_st="unknown"
   _proj_set "$name" "status" "$new_st"
   _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
   _proj_history_append "$name" "status" "${old_st}→${new_st}"
@@ -794,6 +795,17 @@ _proj_sync() {
 
   local git_dir="$PROJ_DATA/.git"
 
+  # Ensure history.log union merge driver is configured so concurrent
+  # history appends from multiple machines merge instead of conflicting.
+  # Idempotent: creates .gitattributes if missing, adds the line if absent.
+  _proj_sync_ensure_gitattributes() {
+    local gaf="$PROJ_DATA/.gitattributes"
+    if [[ -f "$gaf" ]] && grep -qF '*/history.log merge=union' "$gaf"; then
+      return 0
+    fi
+    echo '*/history.log merge=union' >> "$gaf"
+  }
+
   if [[ ! -d "$git_dir" ]]; then
     # First sync — check if remote has content.
     # `git ls-remote "$repo" HEAD` exits 0 even for a truly empty bare repo,
@@ -832,6 +844,7 @@ _proj_sync() {
       done
 
       cd "$PROJ_DATA"
+      _proj_sync_ensure_gitattributes
       git add -A && git commit -m "sync merge from $(hostname) $(date +%Y-%m-%d)" 2>/dev/null
       git push origin main 2>/dev/null
       echo "${_pc_green}Sync complete (cloned + merged local).${_pc_reset}"
@@ -850,6 +863,7 @@ _proj_sync() {
       cd "$PROJ_DATA"
       # Create .gitignore for data dir
       echo "*.backup*" > .gitignore
+      _proj_sync_ensure_gitattributes
       git init 2>/dev/null
       git add -A
       git commit -m "initial sync from $(hostname) $(date +%Y-%m-%d)" 2>/dev/null
@@ -864,6 +878,7 @@ _proj_sync() {
   else
     # Mode 3: Subsequent sync
     cd "$PROJ_DATA"
+    _proj_sync_ensure_gitattributes
     git add -A
     git commit -m "sync $(hostname) $(date +%Y-%m-%d %H:%M)" 2>/dev/null || true
 
@@ -1120,6 +1135,7 @@ _proj_interactive() {
         *"${_i[close_done]}"*)
           local _old_st
           _old_st=$(_proj_get "$target" "status")
+          [[ -z "$_old_st" ]] && _old_st="unknown"
           _proj_set "$target" "status" "done"
           _proj_set "$target" "updated" "$(date '+%Y-%m-%d %H:%M')"
           _proj_history_append "$target" "status" "${_old_st}→done"
@@ -1312,6 +1328,13 @@ _proj_relative_time() {
 _proj_history_ts_to_epoch() {
   local ts="$1"
   [[ -z "$ts" ]] && return 1
+  # Reject anything that doesn't match one of the two known log formats.
+  # GNU `date -d` is aggressively lenient — it accepts "1200", "now",
+  # "next monday" — so we must gate the fallback on shape or a corrupt
+  # log line on Linux renders as a plausible history row.
+  if ! [[ "$ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}Z|\ [0-9]{2}:[0-9]{2}:[0-9]{2})$ ]]; then
+    return 1
+  fi
   local epoch
   # BSD date: UTC ISO 8601 Z-form. -u tells BSD date the input is UTC.
   if epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null) && [[ -n "$epoch" ]]; then
@@ -1321,7 +1344,7 @@ _proj_history_ts_to_epoch() {
   if epoch=$(date -j -f "%Y-%m-%d %H:%M:%S" "$ts" +%s 2>/dev/null) && [[ -n "$epoch" ]]; then
     echo "$epoch"; return 0
   fi
-  # GNU date: flexible -d. Handles both ISO 8601 Z-form and naive local.
+  # GNU date: flexible -d. Input shape already gated above.
   if epoch=$(date -d "$ts" +%s 2>/dev/null) && [[ -n "$epoch" ]]; then
     echo "$epoch"; return 0
   fi
@@ -1507,6 +1530,9 @@ _proj_doctor() {
   # fzf
   if command -v fzf &>/dev/null; then
     local f_ver=$(fzf --version 2>/dev/null | awk '{print $1}')
+    # Strip leading v/V — some distros print "v0.55.0 (sha)" which would
+    # defeat the numeric parse below.
+    f_ver="${f_ver#[vV]}"
     local f_major=${f_ver%%.*}
     local f_rest=${f_ver#*.}
     local f_minor=${f_rest%%.*}
@@ -1711,19 +1737,45 @@ _proj_tag() {
   done
 
   local tag_file="$PROJ_DATA/$name/tags"
+
+  # Compute what's actually new so we don't bump `updated` or log a
+  # phantom history event when the call is a no-op (re-adding an existing
+  # tag or tagging with a duplicate set).
+  local -a existing new_tags
+  if [[ -f "$tag_file" ]]; then
+    existing=("${(@f)$(<"$tag_file")}")
+  fi
+  for t in "$@"; do
+    if [[ " ${existing[*]} " != *" $t "* ]]; then
+      new_tags+=("$t")
+    fi
+  done
+
+  if (( ${#new_tags[@]} == 0 )); then
+    echo "${_pc_dim}Already tagged: $*${_pc_reset}"
+    return 0
+  fi
+
   local tmpf="$tag_file.tmp"
-  {
-    [[ -f "$tag_file" ]] && cat "$tag_file"
-    printf '%s\n' "$@"
-  } | grep -v '^$' | sort -u > "$tmpf" && mv "$tmpf" "$tag_file"
+  if ! { [[ -f "$tag_file" ]] && cat "$tag_file"; printf '%s\n' "$@"; } \
+       | grep -v '^$' | sort -u > "$tmpf"; then
+    rm -f "$tmpf"
+    echo "${_pc_red}Failed to write tag file${_pc_reset}"
+    return 1
+  fi
+  if ! mv "$tmpf" "$tag_file"; then
+    rm -f "$tmpf"
+    echo "${_pc_red}Failed to commit tag update${_pc_reset}"
+    return 1
+  fi
 
   _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
 
   local plus_list=""
-  for t in "$@"; do plus_list+="+${t} "; done
+  for t in "${new_tags[@]}"; do plus_list+="+${t} "; done
   _proj_history_append "$name" "tag" "${plus_list% }"
 
-  echo "${_pc_green}$(_t tag_added "$name" "$*")${_pc_reset}"
+  echo "${_pc_green}$(_t tag_added "$name" "${new_tags[*]}")${_pc_reset}"
 }
 
 _proj_untag() {
@@ -1738,9 +1790,35 @@ _proj_untag() {
     return 1
   fi
 
+  # Validate each arg so an embedded newline in `$1` can't inject a fake
+  # line into history.log via _proj_history_append.
+  local t
+  for t in "$@"; do
+    if ! _proj_tag_valid "$t"; then
+      echo "${_pc_red}$(_t tag_invalid "$t")${_pc_reset}"
+      return 1
+    fi
+  done
+
   local tag_file="$PROJ_DATA/$name/tags"
   if [[ ! -f "$tag_file" ]]; then
     echo "${_pc_dim}${_i[no_tags_here]}${_pc_reset}"
+    return 0
+  fi
+
+  # Compute what's actually present so we don't log phantom events for
+  # untag calls that target tags the project doesn't have.
+  local -a existing removed_tags
+  existing=("${(@f)$(<"$tag_file")}")
+  local arg
+  for arg in "$@"; do
+    if [[ " ${existing[*]} " == *" $arg "* ]]; then
+      removed_tags+=("$arg")
+    fi
+  done
+
+  if (( ${#removed_tags[@]} == 0 )); then
+    echo "${_pc_dim}Not tagged: $*${_pc_reset}"
     return 0
   fi
 
@@ -1758,11 +1836,10 @@ _proj_untag() {
   _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
 
   local minus_list=""
-  local t
-  for t in "$@"; do minus_list+="-${t} "; done
+  for t in "${removed_tags[@]}"; do minus_list+="-${t} "; done
   _proj_history_append "$name" "tag" "${minus_list% }"
 
-  echo "${_pc_green}$(_t tag_removed "$name" "$*")${_pc_reset}"
+  echo "${_pc_green}$(_t tag_removed "$name" "${removed_tags[*]}")${_pc_reset}"
 }
 
 _proj_tags_list() {
@@ -1842,6 +1919,14 @@ _proj_import_dir() {
 
   if ! [[ "$depth" =~ ^[0-9]+$ ]]; then
     echo "${_pc_red}--depth must be a non-negative integer${_pc_reset}"
+    return 1
+  fi
+  # Upper bound: practical git repo hierarchies never exceed a few
+  # levels. Cap via a string-length check FIRST (before arithmetic) to
+  # defend against zsh's 19-digit truncation on absurdly long numeric
+  # strings, then do the numeric bound check.
+  if (( ${#depth} > 3 )) || (( depth > 20 )); then
+    echo "${_pc_red}--depth must be <= 20${_pc_reset}"
     return 1
   fi
 
@@ -1961,11 +2046,10 @@ _proj_import_dir() {
     fi
 
     if [[ $dry_run -eq 1 ]]; then
-      if [[ $relink -eq 1 ]]; then
-        echo "  ${_pc_cyan}[dry-run] would re-link $base → $projpath${_pc_reset}"
-      else
-        echo "  ${_pc_cyan}[dry-run] would add $base → $projpath${_pc_reset}"
-      fi
+      # Synced-project relink needs interactive confirmation, so the
+      # relink branch above already continues for dry-run. Everything
+      # reaching here is a fresh add.
+      echo "  ${_pc_cyan}[dry-run] would add $base → $projpath${_pc_reset}"
       continue
     fi
 
@@ -2127,9 +2211,12 @@ _proj_completion() {
     _describe 'tag' all_tags
   fi
   if [[ $CURRENT -ge 4 && "${words[2]}" == "untag" ]]; then
-    # Suggest tags specific to this project. Same (@f) hardening as above.
+    # Suggest tags specific to this project. Validate pname against the
+    # basename regex before touching the filesystem — otherwise a user
+    # typing `proj untag ../../tmp/evil <TAB>` would read arbitrary files
+    # ending in /tags outside $PROJ_DATA via path traversal.
     local pname="${words[3]}"
-    if [[ -n "$pname" && -f "$PROJ_DATA/$pname/tags" ]]; then
+    if [[ "$pname" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ && -f "$PROJ_DATA/$pname/tags" ]]; then
       local -a proj_tags=("${(@f)$(<"$PROJ_DATA/$pname/tags")}")
       _describe 'tag' proj_tags
     fi

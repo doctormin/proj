@@ -205,6 +205,27 @@ EOF
   refute_output --partial "this is not a valid"
 }
 
+@test "proj history: rejects junk timestamps (GNU date strict-shape gate)" {
+  # GNU date -d accepts "1200", "now", "next monday" — without the strict
+  # format gate in _proj_history_ts_to_epoch, those would render as
+  # plausible history rows on Linux. Verify they're dropped.
+  _add foo
+  local log="$(_history_file foo)"
+  cat > "$log" <<EOF
+1200|status|fake→done|
+now|edit|desc|
+next monday|tag|+malicious|
+2026-04-10T10:00:00Z|status|active→paused|
+EOF
+
+  run proj history foo
+  assert_success
+  # Only the one legitimate line renders
+  assert_output --partial "active→paused"
+  refute_output --partial "fake→done"
+  refute_output --partial "malicious"
+}
+
 @test "proj history: legacy local-wall-clock lines still parse (backward compat)" {
   # Older proj versions wrote "YYYY-MM-DD HH:MM:SS" without a TZ indicator.
   # The parser still accepts those so upgrading doesn't break existing logs.

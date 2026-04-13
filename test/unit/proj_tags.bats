@@ -108,6 +108,63 @@ _add() {
 
 # proj untag
 
+@test "proj untag: rejects tag with embedded newline (history log injection defense)" {
+  _add foo
+  proj tag foo work >/dev/null
+
+  # A newline-containing arg would otherwise let the user append a forged
+  # history.log line via _proj_history_append. Validate before doing
+  # anything.
+  run proj untag foo $'bad\nline'
+  assert_failure
+  assert_output --partial "Invalid tag"
+}
+
+@test "proj untag: rejects tag with uppercase (same validation as proj tag)" {
+  _add foo
+  proj tag foo work >/dev/null
+
+  run proj untag foo WORK
+  assert_failure
+  assert_output --partial "Invalid tag"
+}
+
+@test "proj tag: re-adding existing tag is a no-op (no bump, no history event)" {
+  _add foo
+  proj tag foo work >/dev/null
+
+  # Pin updated to a known old value
+  echo "2020-01-01 00:00" > "$(proj_data_dir)/foo/updated"
+
+  run proj tag foo work
+  assert_success
+  assert_output --partial "Already tagged"
+
+  # updated was NOT bumped
+  assert_equal "$(proj_field foo updated)" "2020-01-01 00:00"
+
+  # history.log has only the first tag event, not two
+  local log="$(proj_data_dir)/foo/history.log"
+  local count
+  count=$(grep -c '|tag|' "$log")
+  assert_equal "$count" "1"
+}
+
+@test "proj untag: removing non-existent tag is a no-op (no bump, no history event)" {
+  _add foo
+  proj tag foo work >/dev/null
+  echo "2020-01-01 00:00" > "$(proj_data_dir)/foo/updated"
+
+  run proj untag foo nonexistent
+  assert_success
+  assert_output --partial "Not tagged"
+
+  assert_equal "$(proj_field foo updated)" "2020-01-01 00:00"
+
+  local log="$(proj_data_dir)/foo/history.log"
+  [ -f "$log" ] && ! grep -q '|tag|-nonexistent' "$log"
+}
+
 @test "proj untag: removes a single tag, leaves others" {
   _add foo
   proj tag foo work client-a deploy >/dev/null
