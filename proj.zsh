@@ -245,7 +245,7 @@ _proj_i18n_zh() {
     code_no_match      "当前目录不属于任何项目。请运行: proj code <name>"
     code_remote        "远端项目无法在本地编辑器打开。先通过 SSH 连接: proj go %s"
     code_no_editor     "找不到编辑器: %s。请设置 \$PROJ_EDITOR 或安装以下之一: code, cursor, subl"
-    code_opened        "→ 已在 %s 中打开 %s"
+    code_opened        "→ 已打开 %s（编辑器: %s）"
     help_code          "在你的编辑器中打开项目（code/cursor/subl）"
 
     # ── 交互面板 ──
@@ -2205,11 +2205,18 @@ _proj_code() {
 
   # Auto-detect target from cwd if omitted. Prefer the longest matching
   # project path so nested checkouts resolve to the inner project.
+  # Use zsh (:A) to canonicalize symlinks on both sides so users who cd
+  # through a symlink to a project still get auto-detected.
   if [[ -z "$target" ]]; then
-    local cwd="$(pwd)" n npath best_name="" best_len=0
-    for n in $(_proj_names); do
+    local cwd="${PWD:A}" n npath best_name="" best_len=0
+    # Newline-split _proj_names with (@f) — safe against project names
+    # that future validation changes might allow to contain unusual chars,
+    # and matches the pattern used in _proj_completion.
+    for n in "${(@f)$(_proj_names)}"; do
+      [[ -z "$n" ]] && continue
       npath=$(_proj_get "$n" "path")
       [[ -z "$npath" ]] && continue
+      npath="${npath:A}"
       if [[ "$cwd" == "$npath" || "$cwd" == "$npath"/* ]]; then
         if (( ${#npath} > best_len )); then
           best_name="$n"; best_len=${#npath}
@@ -2240,32 +2247,37 @@ _proj_code() {
     return 1
   fi
 
-  # Editor selection: $PROJ_EDITOR (explicit override) > code > cursor > subl.
-  local editor=""
+  # Editor selection: $PROJ_EDITOR (explicit override, may include args) >
+  # code > cursor > subl. Use $+commands (PATH-only lookup) rather than
+  # `command -v`, which also matches shell functions and aliases that the
+  # function-scoped exec below would silently bypass.
+  local -a editor_cmd
   if [[ -n "$PROJ_EDITOR" ]]; then
-    if command -v "$PROJ_EDITOR" &>/dev/null; then
-      editor="$PROJ_EDITOR"
-    else
+    # Split $PROJ_EDITOR on whitespace so values like 'code --wait' work.
+    editor_cmd=(${=PROJ_EDITOR})
+    if (( ${#editor_cmd} == 0 )) || (( ! ${+commands[${editor_cmd[1]}]} )); then
       echo "${_pc_red}$(_t code_no_editor "$PROJ_EDITOR")${_pc_reset}"
       return 1
     fi
   else
     local candidate
     for candidate in code cursor subl; do
-      if command -v "$candidate" &>/dev/null; then
-        editor="$candidate"; break
+      if (( ${+commands[$candidate]} )); then
+        editor_cmd=("$candidate"); break
       fi
     done
-    if [[ -z "$editor" ]]; then
+    if (( ${#editor_cmd} == 0 )); then
       echo "${_pc_red}$(_t code_no_editor "code/cursor/subl")${_pc_reset}"
       return 1
     fi
   fi
 
-  "$editor" "$projpath" || return $?
+  # Pass `--` before the path so a corrupted or unusual projpath starting
+  # with a dash cannot be misinterpreted as a flag by the editor.
+  "${editor_cmd[@]}" -- "$projpath" || return $?
 
   _proj_set "$target" "updated" "$(date '+%Y-%m-%d %H:%M')"
-  echo "${_pc_cyan}$(_t code_opened "$target" "$editor")${_pc_reset}"
+  echo "${_pc_cyan}$(_t code_opened "$target" "${editor_cmd[1]}")${_pc_reset}"
 }
 
 # ── Tab 补全 ──

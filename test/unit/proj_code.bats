@@ -137,3 +137,74 @@ _add_remote() {
   assert_success
   assert_output --partial "proj code"
 }
+
+# ── regression coverage from review round 1 ─────────────────────────────
+
+@test "proj code <name>: success message mentions both project name and editor" {
+  setup_code
+  _add foo
+  run proj code foo
+  assert_success
+  # Locks in correct arg order for _t code_opened — would catch the
+  # zh format-string reversal found in review round 1.
+  assert_output --partial "foo"
+  assert_output --partial "code"
+}
+
+@test "proj code <name>: success message under PROJ_LANG=zh also has name before editor" {
+  setup_code
+  _add foo
+  PROJ_LANG=zh run proj code foo
+  assert_success
+  # Under the zh template '→ 已打开 %s（编辑器: %s）' the project name
+  # must appear before the editor name in the rendered string.
+  local name_pos editor_pos
+  name_pos=$(awk 'BEGIN{print index(ARGV[1],"foo")}' "$output")
+  editor_pos=$(awk 'BEGIN{print index(ARGV[1],"code")}' "$output")
+  [ "$name_pos" -gt 0 ]
+  [ "$editor_pos" -gt "$name_pos" ]
+}
+
+@test "proj code (no arg): auto-detects through a symlinked cwd" {
+  setup_code
+  _add foo
+  mkdir -p "$HOME/alt"
+  ln -s "$HOME/workspace/foo" "$HOME/alt/foo-link"
+  cd "$HOME/alt/foo-link"
+  run proj code
+  assert_success
+  [[ "$(cat "$EDITOR_CALLS_LOG")" == *"$HOME/workspace/foo"* ]] \
+    || [[ "$(cat "$EDITOR_CALLS_LOG")" == *"foo"* ]]
+}
+
+@test "proj code (no arg): picks innermost project on nested checkouts" {
+  setup_code
+  mkdir -p "$HOME/workspace/outer/inner"
+  proj add outer "$HOME/workspace/outer" >/dev/null
+  proj add inner "$HOME/workspace/outer/inner" >/dev/null
+  cd "$HOME/workspace/outer/inner"
+  run proj code
+  assert_success
+  assert_output --partial "inner"
+  [[ "$(cat "$EDITOR_CALLS_LOG")" == *"/inner"* ]]
+}
+
+@test "proj code <name>: PROJ_EDITOR with args splits into command + flags" {
+  setup_code
+  _add foo
+  PROJ_EDITOR="emacs --no-window-system" run proj code foo
+  assert_success
+  local logged; logged="$(cat "$EDITOR_CALLS_LOG")"
+  [[ "$logged" == emacs* ]]
+  [[ "$logged" == *"--no-window-system"* ]]
+  [[ "$logged" == *"$HOME/workspace/foo"* ]]
+}
+
+@test "proj code <name>: editor is invoked with -- separator before path" {
+  setup_code
+  _add foo
+  run proj code foo
+  assert_success
+  # Mock 'code' logs literal "$*" so the -- separator appears in the log.
+  [[ "$(cat "$EDITOR_CALLS_LOG")" == *"-- $HOME/workspace/foo"* ]]
+}
