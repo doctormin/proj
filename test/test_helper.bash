@@ -19,13 +19,17 @@
 PROJ_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
 export PROJ_ROOT
 
-# Force TMPDIR to /tmp so:
-#   1. mktemp -d -t proj-test.XXXXXX lands in /tmp on both Linux and macOS
-#      (macOS default TMPDIR is /var/folders/..., which makes CI artifact
-#      globs miss the failed-test state on the macos-latest job).
-#   2. Temp paths are predictable for teardown and log collection.
-# Do this at file load time so every test in every file sees the same TMPDIR.
-export TMPDIR=/tmp
+# Route all test-created temp directories under a single parent so:
+#   1. run.sh can purge the whole tree in one rm -rf at the start
+#   2. CI artifact upload has one glob to match on failure
+#   3. macOS $TMPDIR default (/var/folders/...) is bypassed uniformly
+#   4. Ad-hoc mktemp calls inside tests (e.g. proj_sync.bats creates a
+#      machine-B home with a different prefix) all land in the same tree
+#
+# Individual test HOMEs are still created via `mktemp -d -t` with unique
+# prefixes — this just pins the parent directory.
+export TMPDIR=/tmp/proj-tests
+mkdir -p "$TMPDIR"
 
 # Load bats-support + bats-assert
 load "$PROJ_ROOT/test/lib/bats-support/load"
@@ -54,7 +58,7 @@ teardown() {
   if [[ -z "${BATS_TEST_COMPLETED:-}" ]]; then
     return
   fi
-  if [[ -n "$TEST_HOME" && -d "$TEST_HOME" && "$TEST_HOME" == /tmp/proj-test.* ]]; then
+  if [[ -n "$TEST_HOME" && -d "$TEST_HOME" && "$TEST_HOME" == /tmp/proj-tests/* ]]; then
     rm -rf "$TEST_HOME"
   fi
 }

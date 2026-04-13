@@ -55,9 +55,12 @@ if [[ ${#targets[@]} -eq 0 ]]; then
 fi
 
 # Purge stale test dirs left behind by prior failed runs. teardown()
-# preserves /tmp/proj-test.* on failure so those states can be inspected;
-# a fresh run.sh invocation is the natural reset point.
-rm -rf /tmp/proj-test.* 2>/dev/null || true
+# preserves temp homes on failure for diagnostic inspection; a fresh
+# run.sh invocation is the natural reset point. test_helper.bash routes
+# all test-created temp dirs under /tmp/proj-tests/ (including ad-hoc
+# mktemp calls inside individual tests), so a single rm clears them.
+rm -rf /tmp/proj-tests 2>/dev/null || true
+mkdir -p /tmp/proj-tests
 
 echo "Running ${#targets[@]} test file(s) with bats $(bats --version | awk '{print $2}')..."
 echo ""

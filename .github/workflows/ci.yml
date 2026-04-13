@@ -84,6 +84,6 @@ jobs:
           name: test-logs-${{ matrix.os }}
           path: |
             test/**/*.log
-            /tmp/proj-test.*
+            /tmp/proj-tests/**
           retention-days: 7
           if-no-files-found: ignore
