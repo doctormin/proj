@@ -62,7 +62,8 @@ is_pipe_mode() {
 
 # ── Download files from GitHub Release ──
 download_release() {
-  local tmpdir=$(mktemp -d)
+  local tmpdir
+  tmpdir=$(mktemp -d)
   local url="https://github.com/${GITHUB_REPO}/archive/refs/tags/v${PROJ_VERSION}.tar.gz"
 
   echo -e "  ${CYAN}Downloading proj v${PROJ_VERSION}...${RESET}"

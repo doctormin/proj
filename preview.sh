@@ -11,7 +11,8 @@ _proj_stat_mtime() {
   local f="$1"
   stat -f "%Sm" -t "%m-%d %H:%M" "$f" 2>/dev/null && return
   # GNU stat fallback: "2026-04-11 00:47:23.000 +0800" → "04-11 00:47"
-  local raw=$(stat -c "%y" "$f" 2>/dev/null)
+  local raw
+  raw=$(stat -c "%y" "$f" 2>/dev/null)
   [[ -n "$raw" ]] && echo "${raw:5:11}" | sed 's/ \([0-9][0-9]:[0-9][0-9]\).*/\1/' | sed 's/-/ /' | sed 's/\([0-9][0-9]\) \([0-9][0-9]:[0-9][0-9]\)/\1 \2/'
   # Output: "04-11 00:47"
 }
@@ -31,7 +32,6 @@ if [[ "$PROJ_LANG" == zh* ]]; then
   L_TODO="TODO"
   L_CLAUDE="Claude 会话"
   L_CLAUDE_TOTAL="(共 %s 个)"
-  L_CLAUDE_RECENT="最近: %s  %s"
   L_CLAUDE_HINT="Ctrl-E 恢复"
   L_NO_SESSION="无 Claude 历史会话"
   L_FILES="目录内容"
@@ -43,7 +43,6 @@ else
   L_TODO="TODO"
   L_CLAUDE="Claude Sessions"
   L_CLAUDE_TOTAL="(%s total)"
-  L_CLAUDE_RECENT="Latest: %s  %s"
   L_CLAUDE_HINT="^E to resume"
   L_NO_SESSION="No Claude session history"
   L_FILES="Files"
@@ -58,7 +57,8 @@ get() {
     # Check path.<machine-id> first, fall back to legacy "path"
     local mid_file="$HOME/.proj/machine-id"
     if [[ -f "$mid_file" ]]; then
-      local mid=$(cat "$mid_file")
+      local mid
+      mid=$(cat "$mid_file")
       [[ -f "$dir/path.$mid" ]] && cat "$dir/path.$mid" && return
     fi
     [[ -f "$dir/path" ]] && cat "$dir/path" || echo ""

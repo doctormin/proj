@@ -11,6 +11,7 @@ Claude scans your code. proj tracks progress/TODO and helps you resume Claude Co
 
 **~1500 lines of shell. No binary. No Node/Python/Go runtime. Loads in milliseconds.**
 
+[![CI](https://github.com/doctormin/proj/actions/workflows/ci.yml/badge.svg)](https://github.com/doctormin/proj/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Shell: zsh](https://img.shields.io/badge/Shell-zsh-blue.svg)](#requirements)
 [![Platform: macOS & Linux](https://img.shields.io/badge/Platform-macOS%20%26%20Linux-orange.svg)](#requirements)

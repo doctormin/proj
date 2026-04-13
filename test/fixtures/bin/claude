@@ -15,12 +15,12 @@
 
 set -e
 
-# Simple flag parsing — we only care about -p for the scan path
+# Simple flag parsing — we only care about -p for the scan path.
+# We don't need the prompt body itself (output is env-driven), just the mode.
 mode="interactive"
-prompt=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -p) mode="print"; shift; prompt="$1"; shift ;;
+    -p) mode="print"; shift 2 ;;  # skip -p and its argument
     -c) mode="continue"; shift ;;
     *)  shift ;;
   esac

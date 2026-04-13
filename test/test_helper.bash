@@ -16,7 +16,8 @@
 # Resolve repo root once.
 # BATS_TEST_DIRNAME is the directory containing the .bats file (test/unit/),
 # so the repo root is two levels up.
-export PROJ_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+PROJ_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+export PROJ_ROOT
 
 # Load bats-support + bats-assert
 load "$PROJ_ROOT/test/lib/bats-support/load"
@@ -24,7 +25,8 @@ load "$PROJ_ROOT/test/lib/bats-assert/load"
 
 # Per-test setup: isolated HOME, clean env.
 setup() {
-  export TEST_HOME=$(mktemp -d -t proj-test.XXXXXX)
+  TEST_HOME=$(mktemp -d -t proj-test.XXXXXX)
+  export TEST_HOME
   export HOME="$TEST_HOME"
   export PATH="$PROJ_ROOT/test/fixtures/bin:$PATH"
 
@@ -82,7 +84,8 @@ proj_data_dir() {
 # Usage: proj_field <name> <field>
 proj_field() {
   local name="$1" field="$2"
-  local dir="$(proj_data_dir)/$name"
+  local dir
+  dir="$(proj_data_dir)/$name"
   [[ -f "$dir/$field" ]] && cat "$dir/$field"
 }
 
