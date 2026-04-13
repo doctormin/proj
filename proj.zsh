@@ -116,6 +116,13 @@ _proj_i18n_en() {
     code_no_editor     "Editor not found: %s. Set \$PROJ_EDITOR or install one of: code, cursor, subl"
     code_opened        "→ Opened %s in %s"
     help_code          "Open project in your editor (code/cursor/subl)"
+    clone_no_git       "git is not installed. Install git first: brew install git (or your package manager)."
+    clone_bad_url      "Could not derive a valid repo name from URL: %s"
+    clone_target_mismatch "Target '%s' is already a git repo with a different origin: %s"
+    clone_already_present "Target already cloned at %s — registering existing checkout."
+    clone_target_not_empty "Target directory is not empty and not a git repo: %s"
+    cloning            "Cloning %s → %s ..."
+    clone_failed       "git clone failed: %s"
 
     # ── interactive panel ──
     panel_title        " 📋 Projects "
@@ -247,6 +254,13 @@ _proj_i18n_zh() {
     code_no_editor     "找不到编辑器: %s。请设置 \$PROJ_EDITOR 或安装以下之一: code, cursor, subl"
     code_opened        "→ 已打开 %s（编辑器: %s）"
     help_code          "在你的编辑器中打开项目（code/cursor/subl）"
+    clone_no_git       "未找到 git。请先安装: brew install git（或用你的包管理器）。"
+    clone_bad_url      "无法从 URL 推断出合法的仓库名: %s"
+    clone_target_mismatch "目标 '%s' 已经是 git 仓库，但 origin 不匹配: %s"
+    clone_already_present "目标已存在于 %s —— 直接登记现有检出。"
+    clone_target_not_empty "目标目录非空且不是 git 仓库: %s"
+    cloning            "正在克隆 %s → %s ..."
+    clone_failed       "git clone 失败: %s"
 
     # ── 交互面板 ──
     panel_title        " 📋 项目面板 "
@@ -423,10 +437,29 @@ _proj_migrate() {
 
 _proj_path_to_claude_dir() { echo "${1//\//-}"; }
 
+# Returns 0 if $1 looks like a git-clonable URL (https://, git://, ssh://,
+# file://, or the scp-like user@host:path form). Used by _proj_add to
+# dispatch URL inputs to the clone path instead of the local-directory
+# registration path.
+_proj_is_git_url() {
+  local url="$1"
+  [[ "$url" =~ ^(https?|git|ssh|file)://.+ ]] && return 0
+  [[ "$url" =~ ^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+: ]] && return 0
+  return 1
+}
+
 # ── proj add ──
 _proj_add() {
   local name="$1"
   local projpath="${2:-$(pwd)}"
+
+  # If the first argument looks like a git URL, dispatch to the clone path.
+  # Must happen before any of the "name" normalization below so that URLs
+  # never get mistaken for a project name.
+  if [[ -n "$name" ]] && _proj_is_git_url "$name"; then
+    _proj_github_clone "$name" "$2"
+    return $?
+  fi
 
   if [[ -z "$name" ]]; then
     name=$(basename "$(pwd)")
@@ -459,6 +492,82 @@ _proj_add() {
   echo ""
   echo "${_pc_cyan}${_i[scanning]}${_pc_reset}"
   _proj_scan_with_claude "$name"
+}
+
+# ── proj add <git-url> clone helper ──
+# Clone a git URL and register the result as a project. Called from
+# _proj_add when the first argument looks like a git URL.
+_proj_github_clone() {
+  local url="$1"
+  local target="$2"
+
+  if ! (( ${+commands[git]} )); then
+    echo "${_pc_red}${_i[clone_no_git]}${_pc_reset}"
+    return 1
+  fi
+
+  # Extract the path portion of the URL, then take basename. Supports
+  # three shapes:
+  #   scheme://host/path  (https, git, ssh, file — host may be empty for file://)
+  #   user@host:path      (scp-like git URL)
+  # Anything else, or a URL with no path component, is rejected.
+  local trimmed="${url%/}" path_part=""
+  if [[ "$trimmed" =~ ^[a-z]+://[^/]*/(.+)$ ]]; then
+    path_part="${match[1]}"
+  elif [[ "$trimmed" =~ ^[^/@]+@[^/:]+:(.+)$ ]]; then
+    path_part="${match[1]}"
+  fi
+
+  local repo_name="${path_part##*/}"
+  repo_name="${repo_name%.git}"
+
+  if [[ -z "$repo_name" ]] \
+     || [[ ! "$repo_name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+    echo "${_pc_red}$(_t clone_bad_url "$url")${_pc_reset}"
+    return 1
+  fi
+
+  # Resolve target directory. Precedence: explicit $2 > $PROJ_CLONE_DIR > ~/proj.
+  if [[ -z "$target" ]]; then
+    local base="${PROJ_CLONE_DIR:-$HOME/proj}"
+    target="$base/$repo_name"
+  fi
+  target="${target/#\~/$HOME}"
+
+  # Decide what to do based on target state.
+  if [[ -d "$target" ]]; then
+    if [[ -d "$target/.git" ]]; then
+      local existing_url
+      existing_url=$(git -C "$target" config --get remote.origin.url 2>/dev/null)
+      if [[ "$existing_url" != "$url" ]]; then
+        echo "${_pc_red}$(_t clone_target_mismatch "$target" "${existing_url:-<none>}")${_pc_reset}"
+        return 1
+      fi
+      echo "${_pc_yellow}$(_t clone_already_present "$target")${_pc_reset}"
+    else
+      # Exists but not a git repo — refuse unless empty.
+      if [[ -n "$(ls -A "$target" 2>/dev/null)" ]]; then
+        echo "${_pc_red}$(_t clone_target_not_empty "$target")${_pc_reset}"
+        return 1
+      fi
+      echo "${_pc_cyan}$(_t cloning "$url" "$target")${_pc_reset}"
+      if ! git clone "$url" "$target"; then
+        echo "${_pc_red}$(_t clone_failed "$url")${_pc_reset}"
+        return 1
+      fi
+    fi
+  else
+    mkdir -p "$(dirname "$target")" 2>/dev/null
+    echo "${_pc_cyan}$(_t cloning "$url" "$target")${_pc_reset}"
+    if ! git clone "$url" "$target"; then
+      echo "${_pc_red}$(_t clone_failed "$url")${_pc_reset}"
+      return 1
+    fi
+  fi
+
+  # Register as a normal local project. The recursion is safe because
+  # $repo_name is a plain basename — it will never match _proj_is_git_url.
+  _proj_add "$repo_name" "$target"
 }
 
 # ── proj add-remote ──
