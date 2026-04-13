@@ -127,3 +127,114 @@ _make_fake_remote() {
   assert_output --partial "Added project"
   [ -d "$(proj_data_dir)/legacy" ]
 }
+
+# ── regression coverage from round 1 review ─────────────────────────────
+
+@test "proj add <url>: PROJ_CLONE_DIR starting with '-' is refused (argv injection defense)" {
+  local bare; bare="$(_make_fake_remote widget)"
+  # If the target slipped through into git clone unguarded, git would
+  # parse `--upload-pack=touch …` as an option and execute it. The
+  # canary file MUST NOT exist after the run.
+  local canary="$TEST_HOME/pwned-canary"
+  PROJ_CLONE_DIR="--upload-pack=touch $canary;true" \
+    run proj add "file://$bare"
+  assert_failure
+  [ ! -e "$canary" ]
+  # Project is NOT registered.
+  [ ! -d "$(proj_data_dir)/widget" ]
+}
+
+@test "proj add <url>: explicit target starting with '-' is refused" {
+  local bare; bare="$(_make_fake_remote widget)"
+  run proj add "file://$bare" "-evil/widget"
+  assert_failure
+  assert_output --partial "begins with '-'"
+}
+
+@test "proj add <url>: name collision refused BEFORE cloning (no orphaned checkout)" {
+  # Pre-register a project named 'widget' at an unrelated path.
+  mkdir -p "$HOME/workspace/widget"
+  proj add widget "$HOME/workspace/widget" >/dev/null
+
+  local bare; bare="$(_make_fake_remote widget)"
+  PROJ_CLONE_DIR="$TEST_HOME/clones" run proj add "file://$bare"
+  assert_failure
+  assert_output --partial "already exists"
+  # Original project unchanged
+  local mid; mid="$(machine_id)"
+  assert_equal "$(cat "$(proj_data_dir)/widget/path.$mid")" "$HOME/workspace/widget"
+  # No clone was performed (no orphaned checkout)
+  [ ! -d "$TEST_HOME/clones/widget" ]
+  refute_output --partial "Cloning"
+}
+
+@test "proj add <url>: existing checkout reused even if .git suffix differs" {
+  local bare; bare="$(_make_fake_remote widget)"
+  local target="$TEST_HOME/clones/widget"
+  # Clone manually using URL with .git suffix
+  git clone --quiet "file://$bare" "$target"
+  # Pass the URL WITHOUT the trailing .git — should normalize and reuse
+  local short_url="file://${bare%.git}"
+  run proj add "$short_url" "$target"
+  assert_success
+  assert_output --partial "already cloned"
+  [ -d "$(proj_data_dir)/widget" ]
+}
+
+@test "proj add <url>: existing checkout reused even with trailing slash difference" {
+  local bare; bare="$(_make_fake_remote widget)"
+  local target="$TEST_HOME/clones/widget"
+  git clone --quiet "file://$bare" "$target"
+  run proj add "file://$bare/" "$target"
+  assert_success
+  assert_output --partial "already cloned"
+}
+
+@test "proj add <url>: URL with credentials is scrubbed in display output" {
+  local bare; bare="$(_make_fake_remote widget)"
+  # https-shaped URL with embedded user:token; clone will fail (file://
+  # behind the credentials is not a real https URL), but we only care
+  # that the printed messages don't echo the token.
+  run proj add "https://alice:supersecrettoken@example.invalid/widget.git" \
+    "$TEST_HOME/clones/widget"
+  assert_failure
+  refute_output --partial "supersecrettoken"
+  refute_output --partial "alice:"
+  # The scrubbed form (https://example.invalid/widget.git) should still appear
+  assert_output --partial "example.invalid/widget.git"
+}
+
+@test "proj add <url>: query string in URL is stripped from derived name" {
+  local bare; bare="$(_make_fake_remote widget)"
+  PROJ_CLONE_DIR="$TEST_HOME/clones" run proj add "file://$bare?ref=main"
+  # Either succeeds (after stripping ?ref=main) or fails cleanly — but
+  # NOT with 'invalid repo name' that includes the query string.
+  if [[ "$status" -eq 0 ]]; then
+    [ -d "$(proj_data_dir)/widget" ]
+  else
+    refute_output --partial "?ref=main"
+  fi
+}
+
+@test "proj add <url>: scrub helper handles plain URL unchanged" {
+  # Direct unit-style coverage of _proj_scrub_url via a plain URL clone.
+  local bare; bare="$(_make_fake_remote widget)"
+  PROJ_CLONE_DIR="$TEST_HOME/clones" run proj add "file://$bare"
+  assert_success
+  # No-op scrub path — the file:// URL appears verbatim
+  assert_output --partial "file://$bare"
+}
+
+@test "proj add <url>: post-clone scan is triggered through recursion" {
+  local bare; bare="$(_make_fake_remote widget)"
+  PROJ_CLONE_DIR="$TEST_HOME/clones" run proj add "file://$bare"
+  assert_success
+  # Composition check: the clone path recurses into _proj_add, which
+  # MUST then call _proj_scan_with_claude (visible as the "Scanning"
+  # marker). A future regression that breaks the recursion would make
+  # this assertion fail.
+  assert_output --partial "Scanning project with Claude"
+  # Standard project-init files must exist.
+  [ -f "$(proj_data_dir)/widget/desc" ]
+  [ -f "$(proj_data_dir)/widget/status" ]
+}

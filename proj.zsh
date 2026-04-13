@@ -123,6 +123,9 @@ _proj_i18n_en() {
     clone_target_not_empty "Target directory is not empty and not a git repo: %s"
     cloning            "Cloning %s → %s ..."
     clone_failed       "git clone failed: %s"
+    clone_name_collision "A project named '%s' already exists. Rename or remove it before re-cloning."
+    clone_bad_target   "Refusing target path that begins with '-' (would be parsed as a git option): %s"
+    clone_mkdir_failed "Cannot create parent directory: %s"
 
     # ── interactive panel ──
     panel_title        " 📋 Projects "
@@ -261,6 +264,9 @@ _proj_i18n_zh() {
     clone_target_not_empty "目标目录非空且不是 git 仓库: %s"
     cloning            "正在克隆 %s → %s ..."
     clone_failed       "git clone 失败: %s"
+    clone_name_collision "已经存在同名项目 '%s'。请先重命名或删除再重新克隆。"
+    clone_bad_target   "目标路径以 '-' 开头会被 git 解析为选项，已拒绝: %s"
+    clone_mkdir_failed "无法创建父目录: %s"
 
     # ── 交互面板 ──
     panel_title        " 📋 项目面板 "
@@ -497,6 +503,28 @@ _proj_add() {
 # ── proj add <git-url> clone helper ──
 # Clone a git URL and register the result as a project. Called from
 # _proj_add when the first argument looks like a git URL.
+# Strip user:password@ from a URL for safe display in messages. Keep the
+# raw $url for the actual git clone invocation — git needs the credentials.
+_proj_scrub_url() {
+  local u="$1"
+  if [[ "$u" =~ ^([a-z]+://)[^/@]+@(.*)$ ]]; then
+    echo "${match[1]}${match[2]}"
+  else
+    echo "$u"
+  fi
+}
+
+# Normalize a git URL for equality comparison. Strip trailing slashes and
+# a trailing .git suffix so the user can paste either `…/foo` or `…/foo.git`
+# and proj will treat an existing checkout cloned from the other variant
+# as "the same upstream" rather than refusing with a mismatch error.
+_proj_normalize_url() {
+  local u="$1"
+  while [[ "$u" == */ ]]; do u="${u%/}"; done
+  u="${u%.git}"
+  echo "$u"
+}
+
 _proj_github_clone() {
   local url="$1"
   local target="$2"
@@ -506,15 +534,28 @@ _proj_github_clone() {
     return 1
   fi
 
+  # Normalize the URL once: strip trailing slashes, query string, and
+  # fragment. The cleaned form is what gets passed to git clone AND used
+  # for derivation. Query/fragment are not meaningful to git clone for any
+  # transport proj supports — pasting `https://host/foo.git?ref=main` should
+  # behave the same as `https://host/foo.git`.
+  local clean_url="$url"
+  while [[ "$clean_url" == */ ]]; do clean_url="${clean_url%/}"; done
+  clean_url="${clean_url%%\?*}"
+  clean_url="${clean_url%%#*}"
+  url="$clean_url"
+
+  local display_url; display_url="$(_proj_scrub_url "$url")"
+
   # Extract the path portion of the URL, then take basename. Supports
   # three shapes:
   #   scheme://host/path  (https, git, ssh, file — host may be empty for file://)
   #   user@host:path      (scp-like git URL)
   # Anything else, or a URL with no path component, is rejected.
-  local trimmed="${url%/}" path_part=""
-  if [[ "$trimmed" =~ ^[a-z]+://[^/]*/(.+)$ ]]; then
+  local path_part=""
+  if [[ "$url" =~ ^[a-z]+://[^/]*/(.+)$ ]]; then
     path_part="${match[1]}"
-  elif [[ "$trimmed" =~ ^[^/@]+@[^/:]+:(.+)$ ]]; then
+  elif [[ "$url" =~ ^[^/@]+@[^/:]+:(.+)$ ]]; then
     path_part="${match[1]}"
   fi
 
@@ -523,7 +564,17 @@ _proj_github_clone() {
 
   if [[ -z "$repo_name" ]] \
      || [[ ! "$repo_name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
-    echo "${_pc_red}$(_t clone_bad_url "$url")${_pc_reset}"
+    echo "${_pc_red}$(_t clone_bad_url "$display_url")${_pc_reset}"
+    return 1
+  fi
+
+  # Refuse upfront if a project with this name already exists, BEFORE we
+  # waste bandwidth on a clone whose checkout would end up orphaned by the
+  # collision branch in _proj_add. The user must pass an explicit target
+  # AND will still hit the collision after clone — so the only safe option
+  # is to fail here with a clear message and let the user rename or rm.
+  if _proj_exists "$repo_name"; then
+    echo "${_pc_red}$(_t clone_name_collision "$repo_name")${_pc_reset}"
     return 1
   fi
 
@@ -534,13 +585,25 @@ _proj_github_clone() {
   fi
   target="${target/#\~/$HOME}"
 
+  # Defense in depth against argv injection into git clone: a target that
+  # starts with `-` would be parsed by git as an option (e.g. attacker
+  # control of $PROJ_CLONE_DIR via a shared dotfile could set it to
+  # `--upload-pack=CMD`, which git would then execute). The `--` separator
+  # below also closes this off, but rejecting up front gives a clear error.
+  if [[ "$target" == -* ]]; then
+    echo "${_pc_red}$(_t clone_bad_target "$target")${_pc_reset}"
+    return 1
+  fi
+
   # Decide what to do based on target state.
   if [[ -d "$target" ]]; then
     if [[ -d "$target/.git" ]]; then
-      local existing_url
+      local existing_url existing_norm requested_norm
       existing_url=$(git -C "$target" config --get remote.origin.url 2>/dev/null)
-      if [[ "$existing_url" != "$url" ]]; then
-        echo "${_pc_red}$(_t clone_target_mismatch "$target" "${existing_url:-<none>}")${_pc_reset}"
+      existing_norm="$(_proj_normalize_url "$existing_url")"
+      requested_norm="$(_proj_normalize_url "$url")"
+      if [[ "$existing_norm" != "$requested_norm" ]]; then
+        echo "${_pc_red}$(_t clone_target_mismatch "$target" "$(_proj_scrub_url "${existing_url:-<none>}")")${_pc_reset}"
         return 1
       fi
       echo "${_pc_yellow}$(_t clone_already_present "$target")${_pc_reset}"
@@ -550,23 +613,26 @@ _proj_github_clone() {
         echo "${_pc_red}$(_t clone_target_not_empty "$target")${_pc_reset}"
         return 1
       fi
-      echo "${_pc_cyan}$(_t cloning "$url" "$target")${_pc_reset}"
-      if ! git clone "$url" "$target"; then
-        echo "${_pc_red}$(_t clone_failed "$url")${_pc_reset}"
+      echo "${_pc_cyan}$(_t cloning "$display_url" "$target")${_pc_reset}"
+      if ! git clone -- "$url" "$target"; then
+        echo "${_pc_red}$(_t clone_failed "$display_url")${_pc_reset}"
         return 1
       fi
     fi
   else
-    mkdir -p "$(dirname "$target")" 2>/dev/null
-    echo "${_pc_cyan}$(_t cloning "$url" "$target")${_pc_reset}"
-    if ! git clone "$url" "$target"; then
-      echo "${_pc_red}$(_t clone_failed "$url")${_pc_reset}"
+    if ! mkdir -p "$(dirname "$target")" 2>/dev/null; then
+      echo "${_pc_red}$(_t clone_mkdir_failed "$(dirname "$target")")${_pc_reset}"
+      return 1
+    fi
+    echo "${_pc_cyan}$(_t cloning "$display_url" "$target")${_pc_reset}"
+    if ! git clone -- "$url" "$target"; then
+      echo "${_pc_red}$(_t clone_failed "$display_url")${_pc_reset}"
       return 1
     fi
   fi
 
-  # Register as a normal local project. The recursion is safe because
-  # $repo_name is a plain basename — it will never match _proj_is_git_url.
+  # Register as a normal local project. We already verified the name is
+  # unused above, so the recursion will not hit the "already exists" branch.
   _proj_add "$repo_name" "$target"
 }
 
