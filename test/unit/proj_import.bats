@@ -221,6 +221,14 @@ _add() {
 @test "proj import: discovers git worktrees (.git is a file, not a dir)" {
   # Create a regular repo and a worktree of it — the worktree has a `.git`
   # FILE containing `gitdir: ...`, not a directory.
+  # CI runners have no global git identity, so set one explicitly for
+  # the `git commit` call inside this test (same pattern the sync tests
+  # use via setup_git_identity).
+  export GIT_AUTHOR_NAME="Test User"
+  export GIT_AUTHOR_EMAIL="test@example.com"
+  export GIT_COMMITTER_NAME="Test User"
+  export GIT_COMMITTER_EMAIL="test@example.com"
+
   _make_repo "$HOME/code/parent"
   (
     cd "$HOME/code/parent"
