@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Mock claude CLI for bats tests.
+#
+# Reads behavior from env vars to stay deterministic:
+#   CLAUDE_STUB_DESC       — what to emit as description JSON
+#   CLAUDE_STUB_PROGRESS   — progress JSON
+#   CLAUDE_STUB_TODO       — todo JSON
+#   CLAUDE_STUB_EXIT       — exit code override (default 0)
+#   CLAUDE_STUB_FAIL       — if set, emit malformed JSON to test error paths
+#
+# Supports the subcommands proj.zsh actually calls:
+#   claude -p '<prompt>'   — non-interactive, prints JSON and exits
+#   claude                 — interactive; in tests we don't exercise this path
+#   claude -c              — continue most recent; we stub as new
+
+set -e
+
+# Simple flag parsing — we only care about -p for the scan path
+mode="interactive"
+prompt=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -p) mode="print"; shift; prompt="$1"; shift ;;
+    -c) mode="continue"; shift ;;
+    *)  shift ;;
+  esac
+done
+
+if [[ -n "$CLAUDE_STUB_FAIL" ]]; then
+  echo "stub failure"
+  exit "${CLAUDE_STUB_EXIT:-1}"
+fi
+
+case "$mode" in
+  print)
+    # Emit a JSON block matching what _proj_scan_with_claude expects.
+    # The real proj.zsh parses with jq for desc/progress/todo fields.
+    cat <<JSON
+{
+  "desc": "${CLAUDE_STUB_DESC:-A stubbed test project}",
+  "progress": "${CLAUDE_STUB_PROGRESS:-No work done yet}",
+  "todo": "${CLAUDE_STUB_TODO:-- first task\n- second task}"
+}
+JSON
+    ;;
+  continue|interactive)
+    # In tests we shouldn't land here — interactive Claude is not exercised.
+    # Echo a marker so any accidental invocation is visible in test output.
+    echo "mock-claude: interactive mode invoked (test should not reach here)"
+    ;;
+esac
+
+exit "${CLAUDE_STUB_EXIT:-0}"

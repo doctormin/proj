@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Mock fzf for bats tests.
+#
+# Real fzf reads stdin and presents an interactive TUI. In tests we can't do
+# that, so we replay a canned response from env vars:
+#   FZF_TEST_RESPONSE      — the exact string fzf would emit as "user's pick"
+#   FZF_TEST_EXIT          — exit code (default 0; 130 simulates user pressing Esc)
+#
+# Tests that exercise _proj_interactive set FZF_TEST_RESPONSE before calling.
+# Tests that don't care about fzf can ignore this stub entirely.
+#
+# We still read stdin fully so upstream pipes don't SIGPIPE.
+
+set -e
+
+# Drain stdin regardless of whether we use it.
+cat > /dev/null
+
+if [[ -n "$FZF_TEST_RESPONSE" ]]; then
+  printf '%s\n' "$FZF_TEST_RESPONSE"
+fi
+
+exit "${FZF_TEST_EXIT:-0}"
