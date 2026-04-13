@@ -48,12 +48,17 @@ zsh -c 'source "$HOME/.proj/proj.zsh" && proj --version'
 
 header "Add a project + check status through the installed path"
 mkdir -p /tmp/sample-project
-zsh -c '
+# Put the test's mock claude on PATH so _proj_scan_with_claude succeeds
+# without needing real auth. Use zsh -e so any step in the chain — add,
+# status, list filtering — fails the whole smoke test instead of being
+# silently swallowed (original version masked failures via `|| true`).
+PATH="/app/test/fixtures/bin:$PATH" zsh -ec '
   source "$HOME/.proj/proj.zsh"
-  proj add sample /tmp/sample-project 2>&1 | grep -v "Scanning" || true
-  proj list | grep sample
+  proj add sample /tmp/sample-project
+  proj list | grep -q sample
   proj status sample done
-  proj list | grep done
+  proj list | grep -q done
+  echo "  add -> status -> list cycle OK"
 '
 
 header "Run full bats suite against Linux coreutils"

@@ -19,6 +19,14 @@
 PROJ_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
 export PROJ_ROOT
 
+# Force TMPDIR to /tmp so:
+#   1. mktemp -d -t proj-test.XXXXXX lands in /tmp on both Linux and macOS
+#      (macOS default TMPDIR is /var/folders/..., which makes CI artifact
+#      globs miss the failed-test state on the macos-latest job).
+#   2. Temp paths are predictable for teardown and log collection.
+# Do this at file load time so every test in every file sees the same TMPDIR.
+export TMPDIR=/tmp
+
 # Load bats-support + bats-assert
 load "$PROJ_ROOT/test/lib/bats-support/load"
 load "$PROJ_ROOT/test/lib/bats-assert/load"
