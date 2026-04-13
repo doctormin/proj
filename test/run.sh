@@ -54,6 +54,11 @@ if [[ ${#targets[@]} -eq 0 ]]; then
   targets=(test/unit/*.bats)
 fi
 
+# Purge stale test dirs left behind by prior failed runs. teardown()
+# preserves /tmp/proj-test.* on failure so those states can be inspected;
+# a fresh run.sh invocation is the natural reset point.
+rm -rf /tmp/proj-test.* 2>/dev/null || true
+
 echo "Running ${#targets[@]} test file(s) with bats $(bats --version | awk '{print $2}')..."
 echo ""
 

@@ -47,6 +47,13 @@ setup() {
 }
 
 teardown() {
+  # Preserve the temp home on failure so CI can upload it as a diagnostic
+  # artifact and local devs can inspect it. bats sets BATS_TEST_COMPLETED=1
+  # only when a test passes; any failure (assertion, timeout, crash) leaves
+  # the variable unset. run.sh purges stale dirs at the start of each run.
+  if [[ -z "${BATS_TEST_COMPLETED:-}" ]]; then
+    return
+  fi
   if [[ -n "$TEST_HOME" && -d "$TEST_HOME" && "$TEST_HOME" == /tmp/proj-test.* ]]; then
     rm -rf "$TEST_HOME"
   fi
