@@ -1,0 +1,7 @@
+#!/bin/sh
+# Mock ssh for bats tests. Logs the full argv (one line per call) to
+# $SSH_CALLS_LOG so tests can assert the command string proj emitted.
+# Exits with $SSH_MOCK_EXIT (default 0) so tests can also cover the
+# connection-failure path.
+echo "ssh $*" >> "${SSH_CALLS_LOG:-/dev/null}"
+exit "${SSH_MOCK_EXIT:-0}"

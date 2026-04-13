@@ -137,6 +137,9 @@ _proj_i18n_en() {
     import_no_zoxide   "proj import zoxide needs zoxide installed and populated."
     import_zoxide_empty "zoxide returned no usable directories."
     help_export        "Export all projects to a JSON file (or stdout)"
+    remote_missing_fields "Remote project '%s' has no host or remote_path. Run: proj edit %s host <user@host>"
+    remote_no_ssh      "ssh is not installed. Install OpenSSH or set your system up for remote access."
+    remote_cc_connecting "→ Connecting to %s: %s"
 
     # ── interactive panel ──
     panel_title        " 📋 Projects "
@@ -289,6 +292,9 @@ _proj_i18n_zh() {
     import_no_zoxide   "proj import zoxide 需要已安装并有数据的 zoxide。"
     import_zoxide_empty "zoxide 没有返回可用的目录。"
     help_export        "将所有项目导出为 JSON 文件（或写到 stdout）"
+    remote_missing_fields "远端项目 '%s' 缺少 host 或 remote_path。运行: proj edit %s host <user@host>"
+    remote_no_ssh      "未安装 ssh。请安装 OpenSSH 或检查远端连接配置。"
+    remote_cc_connecting "→ 连接 %s: %s"
 
     # ── 交互面板 ──
     panel_title        " 📋 项目面板 "
@@ -1196,10 +1202,56 @@ METAEOF
   claude -c 2>/dev/null || claude
 }
 
+# ── _proj_ssh_remote_claude ──
+# Run `claude -c` on the remote host over ssh -t. Used by _proj_resume_claude
+# when the target project has type=remote. Reuses the current terminal —
+# Claude takes over the foreground process (exec), Ctrl-C goes to Claude,
+# and exiting Claude drops the user back into their local shell.
+#
+# PATH caveat: most Linux servers add user binaries like ~/.local/bin via
+# ~/.profile, which bash sources on login but zsh does NOT source when
+# invoked as `zsh -lc`. The default `bash -lc` is therefore the most
+# reliable wrapper across standard server configs. Users whose remote box
+# relies on .zshrc can override with PROJ_REMOTE_SHELL="zsh -ic".
+_proj_ssh_remote_claude() {
+  local name="$1"
+  local host; host=$(_proj_get "$name" "host")
+  local rpath; rpath=$(_proj_get "$name" "remote_path")
+
+  if [[ -z "$host" || -z "$rpath" ]]; then
+    echo "${_pc_red}$(_t remote_missing_fields "$name")${_pc_reset}"
+    return 1
+  fi
+
+  if ! (( ${+commands[ssh]} )); then
+    echo "${_pc_red}${_i[remote_no_ssh]}${_pc_reset}"
+    return 1
+  fi
+
+  local remote_shell="${PROJ_REMOTE_SHELL:-bash -lc}"
+  local escaped_path; escaped_path=$(printf %q "$rpath")
+
+  echo "${_pc_cyan}$(_t remote_cc_connecting "$host" "$rpath")${_pc_reset}"
+  _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
+
+  # Full command: ssh -t <host> '<shell> "cd <path> && exec claude -c"'
+  # The outer shell evaluation on the remote runs whichever shell the user
+  # configured, which loads its login rc and ensures claude is on PATH.
+  ssh -t "$host" "$remote_shell \"cd $escaped_path && exec claude -c\""
+}
+
 # ── _proj_resume_claude (cd + resume session) ──
 _proj_resume_claude() {
   local name="$1"
   if ! _proj_exists "$name"; then return 1; fi
+
+  # Remote projects take a separate path — there is no local checkout to
+  # cd into and no local ~/.claude/projects/<encoded-cwd>/ session dir.
+  local ptype; ptype=$(_proj_get "$name" "type")
+  if [[ "$ptype" == "remote" ]]; then
+    _proj_ssh_remote_claude "$name"
+    return $?
+  fi
 
   local projpath=$(_proj_get "$name" "path")
   [[ ! -d "$projpath" ]] && return 1
