@@ -76,6 +76,7 @@ desc=$(get desc)
 updated=$(get updated)
 progress=$(get progress)
 todo=$(get todo)
+tags=$(get tags)
 
 # 状态图标
 case "$st" in
@@ -105,6 +106,14 @@ else
   fi
 fi
 [[ -n "$updated" ]] && printf "  ${D}${L_LAST_UPDATED}${R}\n" "$updated"
+if [[ -n "$tags" ]]; then
+  chips=""
+  while IFS= read -r _tag; do
+    [[ -z "$_tag" ]] && continue
+    chips+=" ${C}#${_tag}${R}"
+  done <<< "$tags"
+  echo -e "  ${D}Tags:${R}${chips}"
+fi
 echo ""
 
 if [[ -n "$desc" ]]; then

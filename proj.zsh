@@ -82,6 +82,30 @@ _proj_i18n_en() {
     usage_scan         "Usage: proj scan <name>  (or run inside a project directory)"
     status_values      "Status must be: active, paused, blocked, done"
     field_values       "Field must be: desc, path, progress, todo"
+    usage_stale        "Usage: proj stale [days]  (days must be a non-negative integer)"
+    no_stale           "No stale projects. Everything is fresh."
+    help_stale         "List projects not updated in N days (default 30)"
+    usage_import       "Usage: proj import [dir] [--depth N] [--yes] [--dry-run]"
+    import_scanning    "Scanning %s for git repositories (depth %s)..."
+    import_found       "Found %s git repo(s):"
+    import_no_repos    "No git repositories found here."
+    import_done        "Import complete: %s added, %s skipped."
+    import_done_relink "Import complete: %s added, %s re-linked, %s skipped."
+    help_import        "Scan a directory for git repos and register them as projects"
+    usage_tag          "Usage: proj tag <name> <tag1> [tag2...]"
+    usage_untag        "Usage: proj untag <name> <tag1> [tag2...]"
+    tag_invalid        "Invalid tag: '%s' (must match [a-z0-9][a-z0-9-]*)"
+    tag_added          "✓ Tagged %s: %s"
+    tag_removed        "✓ Removed from %s: %s"
+    no_tags            "No tags yet. Try: proj tag <name> <tag>"
+    no_tags_here       "This project has no tags."
+    help_tag           "Add tags to a project"
+    help_untag         "Remove tags from a project"
+    help_tags          "List all tags with counts"
+    help_doctor        "Diagnose environment, schema, sync, and project health"
+    usage_history      "Usage: proj history <name> [--all]"
+    no_history         "No history recorded for this project yet."
+    help_history       "Show timeline of status/edit/tag events"
 
     # ── interactive panel ──
     panel_title        " 📋 Projects "
@@ -179,6 +203,30 @@ _proj_i18n_zh() {
     usage_scan         "用法: proj scan <name>  (或在项目目录内运行)"
     status_values      "状态必须是: active, paused, blocked, done"
     field_values       "字段必须是: desc, path, progress, todo"
+    usage_stale        "用法: proj stale [days]  (days 必须是非负整数)"
+    no_stale           "没有停滞项目，一切都是新鲜的。"
+    help_stale         "列出超过 N 天未更新的项目（默认 30）"
+    usage_import       "用法: proj import [dir] [--depth N] [--yes] [--dry-run]"
+    import_scanning    "正在扫描 %s 的 git 仓库 (深度 %s)..."
+    import_found       "发现 %s 个 git 仓库:"
+    import_no_repos    "此目录下没有 git 仓库。"
+    import_done        "导入完成: 新增 %s 个，跳过 %s 个。"
+    import_done_relink "导入完成: 新增 %s 个，重新链接 %s 个，跳过 %s 个。"
+    help_import        "扫描目录中的 git 仓库并批量注册为项目"
+    usage_tag          "用法: proj tag <name> <tag1> [tag2...]"
+    usage_untag        "用法: proj untag <name> <tag1> [tag2...]"
+    tag_invalid        "无效的标签: '%s' (必须匹配 [a-z0-9][a-z0-9-]*)"
+    tag_added          "✓ 已为 %s 添加标签: %s"
+    tag_removed        "✓ 已从 %s 移除: %s"
+    no_tags            "还没有标签。试试: proj tag <name> <tag>"
+    no_tags_here       "此项目没有标签。"
+    help_tag           "为项目添加标签"
+    help_untag         "移除项目的标签"
+    help_tags          "列出所有标签及计数"
+    help_doctor        "诊断环境、schema、同步和项目健康状况"
+    usage_history      "用法: proj history <name> [--all]"
+    no_history         "此项目还没有历史记录。"
+    help_history       "查看项目的状态/编辑/标签事件时间线"
 
     # ── 交互面板 ──
     panel_title        " 📋 项目面板 "
@@ -589,8 +637,11 @@ _proj_status() {
     active|paused|blocked|done) ;;
     *) echo "${_pc_red}${_i[status_values]}${_pc_reset}"; return 1 ;;
   esac
+  local old_st
+  old_st=$(_proj_get "$name" "status")
   _proj_set "$name" "status" "$new_st"
   _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
+  _proj_history_append "$name" "status" "${old_st}→${new_st}"
   echo "${_pc_green}$(_t status_changed "$name" "$new_st")${_pc_reset}"
 }
 
@@ -613,6 +664,7 @@ _proj_edit() {
     desc|path|progress|todo)
       _proj_set "$name" "$field" "$value"
       _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
+      _proj_history_append "$name" "edit" "$field"
       echo "${_pc_green}$(_t field_updated "$name" "$field")${_pc_reset}"
       ;;
     *) echo "${_pc_red}${_i[field_values]}${_pc_reset}"; return 1 ;;
@@ -1066,8 +1118,11 @@ _proj_interactive() {
       )
       case "$choice" in
         *"${_i[close_done]}"*)
+          local _old_st
+          _old_st=$(_proj_get "$target" "status")
           _proj_set "$target" "status" "done"
           _proj_set "$target" "updated" "$(date '+%Y-%m-%d %H:%M')"
+          _proj_history_append "$target" "status" "${_old_st}→done"
           echo "${_pc_green}$(_t status_changed "$target" "done")${_pc_reset}"
           ;;
         *"${_i[close_remove]}"*)
@@ -1103,6 +1158,13 @@ proj() {
     edit)      _proj_edit "$@" ;;
     config|cfg) _proj_config "$@" ;;
     count)     _proj_active_count ;;
+    stale)     _proj_stale "$@" ;;
+    import)    _proj_import_dir "$@" ;;
+    tag)       _proj_tag "$@" ;;
+    untag)     _proj_untag "$@" ;;
+    tags)      _proj_tags_list "$@" ;;
+    doctor)    _proj_doctor ;;
+    history)   _proj_history "$@" ;;
     -v|--version)
       echo "proj $PROJ_VERSION"
       return
@@ -1123,6 +1185,13 @@ proj() {
       echo "  ${_pc_cyan}proj status <name> <...>${_pc_reset}     ${_i[help_status]}"
       echo "  ${_pc_cyan}proj edit <name> <field> <val>${_pc_reset}  ${_i[help_edit]}"
       echo "  ${_pc_cyan}proj list [active|done]${_pc_reset}       ${_i[help_list]}"
+      echo "  ${_pc_cyan}proj stale [days]${_pc_reset}            ${_i[help_stale]}"
+      echo "  ${_pc_cyan}proj import [dir]${_pc_reset}            ${_i[help_import]}"
+      echo "  ${_pc_cyan}proj tag <name> <tag...>${_pc_reset}     ${_i[help_tag]}"
+      echo "  ${_pc_cyan}proj untag <name> <tag...>${_pc_reset}   ${_i[help_untag]}"
+      echo "  ${_pc_cyan}proj tags${_pc_reset}                    ${_i[help_tags]}"
+      echo "  ${_pc_cyan}proj doctor${_pc_reset}                  ${_i[help_doctor]}"
+      echo "  ${_pc_cyan}proj history <name>${_pc_reset}          ${_i[help_history]}"
       echo "  ${_pc_cyan}proj config${_pc_reset}                  ${_i[help_config]}"
       echo ""
       echo "  ${_pc_dim}${_i[help_hotkeys]}${_pc_reset}"
@@ -1192,6 +1261,760 @@ _proj_list() {
   done
 }
 
+# Parse "YYYY-MM-DD HH:MM" timestamp to epoch seconds.
+# Prints the epoch and returns 0 on success; returns 1 and prints nothing on failure.
+# Tries BSD date first (macOS), then GNU date (Linux).
+_proj_date_to_epoch() {
+  local ts="$1"
+  [[ -z "$ts" ]] && return 1
+  local epoch
+  if epoch=$(date -j -f "%Y-%m-%d %H:%M" "$ts" +%s 2>/dev/null) && [[ -n "$epoch" ]]; then
+    echo "$epoch"
+    return 0
+  fi
+  if epoch=$(date -d "$ts" +%s 2>/dev/null) && [[ -n "$epoch" ]]; then
+    echo "$epoch"
+    return 0
+  fi
+  return 1
+}
+
+# Append a line to the project's history log.
+# Format: YYYY-MM-DDTHH:MM:SSZ|<type>|<detail>|
+# Timestamps are written in UTC (ISO 8601, Z-suffix) so that multi-machine
+# sync + merge across time zones produces an unambiguously orderable log.
+# No-op if the project doesn't exist (belt-and-suspenders).
+_proj_history_append() {
+  local name="$1" type="$2" detail="$3"
+  _proj_exists "$name" || return 0
+  local log="$PROJ_DATA/$name/history.log"
+  printf '%s|%s|%s|\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$type" "$detail" >> "$log"
+}
+
+# Format a seconds delta as a compact relative-time string.
+_proj_relative_time() {
+  local delta=$1
+  (( delta < 0 )) && delta=0
+  if   (( delta < 60 ));      then echo "just now"
+  elif (( delta < 3600 ));    then echo "$((delta / 60))m ago"
+  elif (( delta < 86400 ));   then echo "$((delta / 3600))h ago"
+  elif (( delta < 604800 ));  then echo "$((delta / 86400))d ago"
+  elif (( delta < 2592000 )); then echo "$((delta / 604800))w ago"
+  else                             echo "$((delta / 2592000))mo ago"
+  fi
+}
+
+# Parse a history-log timestamp to epoch seconds.
+# Accepted formats (tried in order):
+#   1. UTC ISO 8601 Z-form: 2026-04-13T15:00:00Z  (current writer)
+#   2. Naive local wall-clock: 2026-04-13 15:00:00 (legacy / tests)
+#   3. Whatever GNU `date -d` can parse (last-resort Linux fallback)
+_proj_history_ts_to_epoch() {
+  local ts="$1"
+  [[ -z "$ts" ]] && return 1
+  local epoch
+  # BSD date: UTC ISO 8601 Z-form. -u tells BSD date the input is UTC.
+  if epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null) && [[ -n "$epoch" ]]; then
+    echo "$epoch"; return 0
+  fi
+  # BSD date: naive local YYYY-MM-DD HH:MM:SS (legacy)
+  if epoch=$(date -j -f "%Y-%m-%d %H:%M:%S" "$ts" +%s 2>/dev/null) && [[ -n "$epoch" ]]; then
+    echo "$epoch"; return 0
+  fi
+  # GNU date: flexible -d. Handles both ISO 8601 Z-form and naive local.
+  if epoch=$(date -d "$ts" +%s 2>/dev/null) && [[ -n "$epoch" ]]; then
+    echo "$epoch"; return 0
+  fi
+  return 1
+}
+
+# ── proj history <name> [--all] ──
+_proj_history() {
+  local name="$1"
+  local all=0
+  if [[ "${2:-}" == "--all" ]]; then
+    all=1
+  fi
+
+  if [[ -z "$name" ]]; then
+    echo "${_pc_red}${_i[usage_history]}${_pc_reset}"
+    return 1
+  fi
+  if ! _proj_exists "$name"; then
+    echo "${_pc_red}$(_t proj_not_exist "$name")${_pc_reset}"
+    return 1
+  fi
+
+  local log="$PROJ_DATA/$name/history.log"
+  if [[ ! -f "$log" || ! -s "$log" ]]; then
+    echo "${_pc_dim}${_i[no_history]}${_pc_reset}"
+    return 0
+  fi
+
+  # Parse every line to (epoch, seq, type, detail). Sort by epoch desc then
+  # seq desc — so that after a multi-machine sync merge (where log lines may
+  # not be in file order) we still render the true newest-first timeline,
+  # and same-second events within one file preserve their insertion order.
+  # Corrupt lines are silently dropped.
+  local parsed=""
+  local line ts type detail rest rest2 ts_epoch
+  local -i seq=0
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" != *"|"*"|"* ]] && continue
+
+    ts="${line%%|*}"
+    rest="${line#*|}"
+    type="${rest%%|*}"
+    rest2="${rest#*|}"
+    detail="${rest2%|}"
+
+    ts_epoch=$(_proj_history_ts_to_epoch "$ts") || continue
+    parsed+="${ts_epoch}|${seq}|${type}|${detail}"$'\n'
+    seq+=1
+  done < "$log"
+
+  if [[ -z "$parsed" ]]; then
+    echo "${_pc_dim}${_i[no_history]}${_pc_reset}"
+    return 0
+  fi
+
+  # Sort by epoch desc (field 1), then seq desc (field 2), then cap.
+  local sorted
+  sorted=$(printf '%s' "$parsed" | sort -t'|' -k1,1nr -k2,2nr)
+  if (( ! all )); then
+    sorted=$(printf '%s\n' "$sorted" | head -n 30)
+  fi
+
+  echo ""
+  local now_epoch
+  now_epoch=$(date +%s)
+  local delta rel color _seq
+  while IFS='|' read -r ts_epoch _seq type detail; do
+    [[ -z "$ts_epoch" ]] && continue
+    delta=$((now_epoch - ts_epoch))
+    (( delta < 0 )) && delta=0
+    rel=$(_proj_relative_time "$delta")
+
+    case "$type" in
+      status) color="$_pc_green"  ;;
+      edit)   color="$_pc_cyan"   ;;
+      tag)    color="$_pc_yellow" ;;
+      *)      color="$_pc_dim"    ;;
+    esac
+
+    printf "  ${_pc_dim}%-12s${_pc_reset}  ${color}%-7s${_pc_reset}  %s\n" "$rel" "$type" "$detail"
+  done <<< "$sorted"
+  echo ""
+}
+
+# ── proj stale ──
+_proj_stale() {
+  local days="${1:-30}"
+  if ! [[ "$days" =~ ^[0-9]+$ ]]; then
+    echo "${_pc_red}${_i[usage_stale]}${_pc_reset}"
+    return 1
+  fi
+
+  local now_epoch
+  now_epoch=$(date +%s)
+  local lines=""
+  local name st updated ts_epoch age_sec age_days
+
+  for name in $(_proj_names); do
+    updated=$(_proj_get "$name" "updated")
+    [[ -z "$updated" ]] && continue
+    ts_epoch=$(_proj_date_to_epoch "$updated") || continue
+    age_sec=$((now_epoch - ts_epoch))
+    (( age_sec < 0 )) && age_sec=0
+    age_days=$((age_sec / 86400))
+    if (( age_days >= days )); then
+      st=$(_proj_get "$name" "status")
+      lines+="${age_days}|${name}|${st}|${updated}"$'\n'
+    fi
+  done
+
+  if [[ -z "$lines" ]]; then
+    echo "${_pc_dim}${_i[no_stale]}${_pc_reset}"
+    return 0
+  fi
+
+  local sorted
+  sorted=$(printf '%s' "$lines" | sort -t'|' -k1,1 -rn)
+
+  echo ""
+  local color age nm stt upd
+  while IFS='|' read -r age nm stt upd; do
+    [[ -z "$age" ]] && continue
+    if (( age > 90 )); then
+      color="$_pc_red"
+    elif (( age >= 30 )); then
+      color="$_pc_yellow"
+    else
+      color="$_pc_dim"
+    fi
+    printf "  ${color}%4dd${_pc_reset}  ${_pc_bold}%-18s${_pc_reset}  %-8s  ${_pc_dim}last: %s${_pc_reset}\n" "$age" "$nm" "$stt" "$upd"
+  done <<< "$sorted"
+  echo ""
+}
+
+# ── proj doctor ──
+# Environment / schema / sync / projects health check.
+# Exits 0 if no failures, 1 otherwise. Warnings do not affect exit code.
+_proj_doctor() {
+  local checks=0 passed=0 warned=0 failed=0
+
+  # Internal helper: print one check and bump counters.
+  _d() {
+    local level="$1" label="$2" value="$3" hint="${4:-}"
+    local icon_color icon
+    case "$level" in
+      pass) icon_color="$_pc_green"; icon="✓" ;;
+      warn) icon_color="$_pc_yellow"; icon="!" ;;
+      fail) icon_color="$_pc_red";    icon="✗" ;;
+      info) icon_color="$_pc_dim";    icon="•" ;;
+    esac
+    if [[ -n "$hint" ]]; then
+      printf "  ${icon_color}${icon}${_pc_reset} %-28s %s ${_pc_dim}%s${_pc_reset}\n" "$label" "$value" "$hint"
+    else
+      printf "  ${icon_color}${icon}${_pc_reset} %-28s %s\n" "$label" "$value"
+    fi
+    case "$level" in
+      pass) ((checks++)); ((passed++)) ;;
+      warn) ((checks++)); ((warned++)) ;;
+      fail) ((checks++)); ((failed++)) ;;
+    esac
+  }
+
+  # ── Environment ──
+  echo ""
+  echo "${_pc_bold}Environment${_pc_reset}"
+
+  # zsh version (we're running in zsh, ZSH_VERSION is set)
+  if [[ -n "${ZSH_VERSION:-}" ]]; then
+    local z_major=${ZSH_VERSION%%.*}
+    local z_rest=${ZSH_VERSION#*.}
+    local z_minor=${z_rest%%.*}
+    if (( z_major > 5 || (z_major == 5 && z_minor >= 8) )); then
+      _d pass "zsh" "$ZSH_VERSION"
+    else
+      _d warn "zsh" "$ZSH_VERSION" "(recommended: ≥5.8)"
+    fi
+  else
+    _d fail "zsh" "not detected"
+  fi
+
+  # fzf
+  if command -v fzf &>/dev/null; then
+    local f_ver=$(fzf --version 2>/dev/null | awk '{print $1}')
+    local f_major=${f_ver%%.*}
+    local f_rest=${f_ver#*.}
+    local f_minor=${f_rest%%.*}
+    if [[ "$f_major" =~ ^[0-9]+$ ]] && [[ "$f_minor" =~ ^[0-9]+$ ]] \
+       && (( f_major > 0 || (f_major == 0 && f_minor >= 40) )); then
+      _d pass "fzf" "$f_ver"
+    else
+      _d warn "fzf" "${f_ver:-unknown}" "(recommended: ≥0.40)"
+    fi
+  else
+    _d warn "fzf" "not found" "(interactive panel disabled)"
+  fi
+
+  # jq
+  if command -v jq &>/dev/null; then
+    _d pass "jq" "$(jq --version 2>/dev/null)"
+  else
+    _d warn "jq" "not found" "(Claude session preview degraded)"
+  fi
+
+  # claude CLI
+  if command -v claude &>/dev/null; then
+    _d pass "claude CLI" "detected"
+  else
+    _d warn "claude CLI" "not found" "(AI scan features disabled)"
+  fi
+
+  # eza (optional)
+  if command -v eza &>/dev/null; then
+    _d info "eza" "detected"
+  else
+    _d info "eza" "not found (ls fallback)"
+  fi
+
+  # starship (optional)
+  if command -v starship &>/dev/null; then
+    _d info "starship" "detected"
+  else
+    _d info "starship" "not found"
+  fi
+
+  # ── Schema ──
+  echo ""
+  echo "${_pc_bold}Schema${_pc_reset}"
+
+  local mid_file="$PROJ_DIR/machine-id"
+  if [[ -f "$mid_file" && -s "$mid_file" ]]; then
+    local mid_preview=$(head -c 12 "$mid_file")
+    _d pass "machine-id" "${mid_preview}..."
+  else
+    _d fail "machine-id" "missing" "(run proj migrate)"
+  fi
+
+  local sv_file="$PROJ_DIR/schema_version"
+  if [[ -f "$sv_file" ]]; then
+    local sv=$(tr -d '[:space:]' < "$sv_file" 2>/dev/null)
+    case "$sv" in
+      2) _d pass "schema version" "v2" ;;
+      1) _d warn "schema version" "v1" "(run proj migrate)" ;;
+      *) _d warn "schema version" "'$sv'" "(unexpected value)" ;;
+    esac
+  else
+    _d fail "schema version" "missing" "(run proj migrate)"
+  fi
+
+  local v_file="$PROJ_DIR/version"
+  if [[ -f "$v_file" ]]; then
+    _d info "installed version" "$(cat "$v_file" 2>/dev/null)"
+  else
+    _d info "installed version" "(not recorded)"
+  fi
+
+  # ── Sync ──
+  echo ""
+  echo "${_pc_bold}Sync${_pc_reset}"
+
+  local sync_url=""
+  if [[ -f "$PROJ_DIR/config" ]]; then
+    sync_url=$(grep '^sync_repo=' "$PROJ_DIR/config" 2>/dev/null | head -1 | cut -d= -f2-)
+  fi
+
+  if [[ -n "$sync_url" ]]; then
+    _d info "sync repo" "$sync_url"
+    if [[ -d "$PROJ_DATA/.git" ]]; then
+      _d pass "data repo" "initialized"
+    else
+      _d warn "data repo" "not initialized" "(run proj sync to set up)"
+    fi
+  else
+    _d info "sync repo" "(not configured)"
+  fi
+
+  # ── Projects ──
+  echo ""
+  echo "${_pc_bold}Projects${_pc_reset}"
+
+  local total=0 c_active=0 c_paused=0 c_blocked=0 c_done=0
+  local c_missing=0 c_unlinked=0 c_stale=0
+  local now_epoch age_sec age_days
+  now_epoch=$(date +%s)
+  local name st pth updated ts
+
+  # Read machine-id directly without triggering auto-generation. Doctor is a
+  # read-only diagnostic — using _proj_get "path" would call _proj_machine_id
+  # which writes a fresh UUID when the file is missing, silently breaking
+  # path resolution for existing path.<old-id> files.
+  local _doctor_mid=""
+  if [[ -f "$mid_file" && -s "$mid_file" ]]; then
+    _doctor_mid=$(cat "$mid_file")
+  fi
+
+  local ptype
+  for name in $(_proj_names); do
+    ((total++))
+    st=$(_proj_get "$name" "status")
+    case "$st" in
+      active)  ((c_active++))  ;;
+      paused)  ((c_paused++))  ;;
+      blocked) ((c_blocked++)) ;;
+      done)    ((c_done++))    ;;
+    esac
+    # Remote projects intentionally have no local path — skip both the
+    # missing and unlinked checks for those. Only local projects count.
+    ptype=$(_proj_get "$name" "type")
+    if [[ "$ptype" != "remote" ]]; then
+      # Read path.<mid> directly without mutating machine-id state.
+      pth=""
+      if [[ -n "$_doctor_mid" && -f "$PROJ_DATA/$name/path.$_doctor_mid" ]]; then
+        pth=$(cat "$PROJ_DATA/$name/path.$_doctor_mid")
+      elif [[ -f "$PROJ_DATA/$name/path" ]]; then
+        pth=$(cat "$PROJ_DATA/$name/path")
+      fi
+      if [[ -z "$pth" ]]; then
+        ((c_unlinked++))
+      elif [[ ! -d "$pth" ]]; then
+        ((c_missing++))
+      fi
+    fi
+    updated=$(_proj_get "$name" "updated")
+    if ts=$(_proj_date_to_epoch "$updated"); then
+      age_sec=$((now_epoch - ts))
+      (( age_sec < 0 )) && age_sec=0
+      age_days=$((age_sec / 86400))
+      (( age_days > 90 )) && ((c_stale++))
+    fi
+  done
+
+  _d info "total" "$total"
+  _d info "by status" "active=$c_active paused=$c_paused blocked=$c_blocked done=$c_done"
+
+  if (( c_missing > 0 )); then
+    _d warn "missing local path" "$c_missing" "(directory deleted on this machine)"
+  else
+    _d pass "missing local path" "0"
+  fi
+
+  if (( c_unlinked > 0 )); then
+    _d info "unlinked on this machine" "$c_unlinked"
+  fi
+
+  if (( c_stale > 0 )); then
+    _d warn "stale (>90 days)" "$c_stale" "(try: proj stale 90)"
+  else
+    _d pass "stale (>90 days)" "0"
+  fi
+
+  # ── Summary ──
+  echo ""
+  printf "${_pc_bold}Summary:${_pc_reset} %d checks, ${_pc_green}%d passed${_pc_reset}, ${_pc_yellow}%d warnings${_pc_reset}, ${_pc_red}%d failed${_pc_reset}\n" \
+    "$checks" "$passed" "$warned" "$failed"
+  echo ""
+
+  unset -f _d
+
+  (( failed == 0 ))
+}
+
+# ── proj tag / untag / tags ──
+# Valid tag: lowercase alnum, may contain hyphens, must start with alnum.
+_proj_tag_valid() {
+  [[ -n "$1" && "$1" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+}
+
+_proj_tag() {
+  local name="$1"
+  shift 2>/dev/null || true
+  if [[ -z "$name" || $# -eq 0 ]]; then
+    echo "${_pc_red}${_i[usage_tag]}${_pc_reset}"
+    return 1
+  fi
+  if ! _proj_exists "$name"; then
+    echo "${_pc_red}$(_t proj_not_exist "$name")${_pc_reset}"
+    return 1
+  fi
+
+  local t
+  for t in "$@"; do
+    if ! _proj_tag_valid "$t"; then
+      echo "${_pc_red}$(_t tag_invalid "$t")${_pc_reset}"
+      return 1
+    fi
+  done
+
+  local tag_file="$PROJ_DATA/$name/tags"
+  local tmpf="$tag_file.tmp"
+  {
+    [[ -f "$tag_file" ]] && cat "$tag_file"
+    printf '%s\n' "$@"
+  } | grep -v '^$' | sort -u > "$tmpf" && mv "$tmpf" "$tag_file"
+
+  _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
+
+  local plus_list=""
+  for t in "$@"; do plus_list+="+${t} "; done
+  _proj_history_append "$name" "tag" "${plus_list% }"
+
+  echo "${_pc_green}$(_t tag_added "$name" "$*")${_pc_reset}"
+}
+
+_proj_untag() {
+  local name="$1"
+  shift 2>/dev/null || true
+  if [[ -z "$name" || $# -eq 0 ]]; then
+    echo "${_pc_red}${_i[usage_untag]}${_pc_reset}"
+    return 1
+  fi
+  if ! _proj_exists "$name"; then
+    echo "${_pc_red}$(_t proj_not_exist "$name")${_pc_reset}"
+    return 1
+  fi
+
+  local tag_file="$PROJ_DATA/$name/tags"
+  if [[ ! -f "$tag_file" ]]; then
+    echo "${_pc_dim}${_i[no_tags_here]}${_pc_reset}"
+    return 0
+  fi
+
+  local tmpf="$tag_file.tmp"
+  # grep -vFxf: filter out lines that literally match any input line.
+  # Exit 1 when all lines filtered (no output) — absorb with || true.
+  grep -vFxf <(printf '%s\n' "$@") "$tag_file" > "$tmpf" 2>/dev/null || true
+
+  if [[ -s "$tmpf" ]]; then
+    mv "$tmpf" "$tag_file"
+  else
+    rm -f "$tmpf" "$tag_file"
+  fi
+
+  _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
+
+  local minus_list=""
+  local t
+  for t in "$@"; do minus_list+="-${t} "; done
+  _proj_history_append "$name" "tag" "${minus_list% }"
+
+  echo "${_pc_green}$(_t tag_removed "$name" "$*")${_pc_reset}"
+}
+
+_proj_tags_list() {
+  local -A tag_counts
+  local -A tag_projects
+  local name t
+  for name in $(_proj_names); do
+    local tag_file="$PROJ_DATA/$name/tags"
+    [[ -f "$tag_file" ]] || continue
+    while IFS= read -r t; do
+      [[ -z "$t" ]] && continue
+      tag_counts[$t]=$((${tag_counts[$t]:-0} + 1))
+      if [[ -z "${tag_projects[$t]:-}" ]]; then
+        tag_projects[$t]="$name"
+      else
+        tag_projects[$t]="${tag_projects[$t]}, $name"
+      fi
+    done < "$tag_file"
+  done
+
+  if [[ ${#tag_counts[@]} -eq 0 ]]; then
+    echo "${_pc_dim}${_i[no_tags]}${_pc_reset}"
+    return 0
+  fi
+
+  local -a sorted_tags
+  sorted_tags=(${(ok)tag_counts})
+
+  echo ""
+  for t in "${sorted_tags[@]}"; do
+    printf "  ${_pc_cyan}#%-15s${_pc_reset} ${_pc_dim}%3d${_pc_reset}  %s\n" \
+      "$t" "${tag_counts[$t]}" "${tag_projects[$t]}"
+  done
+  echo ""
+}
+
+# ── proj import <dir> ──
+# Scan a directory tree for git repos and register them as projects.
+_proj_import_dir() {
+  local scan_dir=""
+  local depth=3
+  local auto_yes=0
+  local dry_run=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --depth)
+        if [[ $# -lt 2 ]]; then
+          echo "${_pc_red}--depth requires a value${_pc_reset}"
+          echo "${_pc_dim}${_i[usage_import]}${_pc_reset}"
+          return 1
+        fi
+        depth="$2"
+        shift 2
+        ;;
+      --depth=*)    depth="${1#--depth=}"; shift ;;
+      --yes|-y)     auto_yes=1; shift ;;
+      --dry-run|-n) dry_run=1; shift ;;
+      --help|-h)
+        echo "${_i[usage_import]}"
+        return 0
+        ;;
+      -*)
+        echo "${_pc_red}Unknown flag: $1${_pc_reset}"
+        echo "${_pc_dim}${_i[usage_import]}${_pc_reset}"
+        return 1
+        ;;
+      *)
+        [[ -z "$scan_dir" ]] && scan_dir="$1"
+        shift
+        ;;
+    esac
+  done
+
+  [[ -z "$scan_dir" ]] && scan_dir="$(pwd)"
+  scan_dir="${scan_dir/#\~/$HOME}"
+
+  if ! [[ "$depth" =~ ^[0-9]+$ ]]; then
+    echo "${_pc_red}--depth must be a non-negative integer${_pc_reset}"
+    return 1
+  fi
+
+  if [[ ! -d "$scan_dir" ]]; then
+    echo "${_pc_red}$(_t dir_not_exist "$scan_dir")${_pc_reset}"
+    return 1
+  fi
+
+  scan_dir="$(cd "$scan_dir" && pwd)"
+
+  echo "${_pc_cyan}$(_t import_scanning "$scan_dir" "$depth")${_pc_reset}"
+
+  # Match both directory `.git` (regular repos) and file `.git` (git worktrees
+  # and submodules, where .git is a pointer file). Two find invocations so we
+  # can -prune directory matches (don't descend into .git dirs) while still
+  # catching file matches.
+  local -a repos
+  local gitpath projpath
+  while IFS= read -r gitpath; do
+    [[ -z "$gitpath" ]] && continue
+    projpath="${gitpath%/.git}"
+    [[ -z "$projpath" ]] && continue
+    repos+=("$projpath")
+  done < <(
+    {
+      find "$scan_dir" -maxdepth $((depth + 1)) -type d -name .git -prune 2>/dev/null
+      find "$scan_dir" -maxdepth $((depth + 1)) -type f -name .git 2>/dev/null
+    } | sort -u
+  )
+
+  if [[ ${#repos[@]} -eq 0 ]]; then
+    echo "${_pc_dim}${_i[import_no_repos]}${_pc_reset}"
+    return 0
+  fi
+
+  echo "${_pc_green}$(_t import_found "${#repos[@]}")${_pc_reset}"
+
+  local added=0 skipped=0 relinked=0
+  local -a registered_names
+  local base existing_path reply override relink
+
+  for projpath in "${repos[@]}"; do
+    base=$(basename "$projpath")
+    relink=0
+
+    # Validate basename. `_proj_names` filters dotfiles and iterates via
+    # shell word-splitting, so names with leading dots or whitespace can't
+    # be round-tripped through `proj list/go/...` later. Reject them up
+    # front with a clear message — the user can rename the directory or
+    # use `proj add <explicit-name> <path>` instead.
+    if [[ ! "$base" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+      echo "  ${_pc_yellow}[skip] $projpath (basename '$base' has invalid characters)${_pc_reset}"
+      echo "  ${_pc_dim}       use: proj add <name> $projpath${_pc_reset}"
+      ((skipped++))
+      continue
+    fi
+
+    if _proj_exists "$base"; then
+      existing_path=$(_proj_get "$base" "path")
+      if [[ "$existing_path" == "$projpath" ]]; then
+        echo "  ${_pc_dim}[skip] $base (already registered)${_pc_reset}"
+        ((skipped++))
+        continue
+      fi
+
+      local existing_type
+      existing_type=$(_proj_get "$base" "type")
+
+      if [[ -z "$existing_path" && "$existing_type" == "local" ]]; then
+        # Project exists in metadata (synced from another machine) but has
+        # no local path on this machine. Re-link is a POSSIBILITY here, but
+        # only if the user actively confirms — a basename match is not
+        # proof it's the same repo. Remote projects (type=remote) always
+        # have empty local path by design, so we never re-link those.
+        #
+        # --yes must NOT auto-relink: an unrelated local checkout that
+        # happens to share a basename would silently clobber unrelated
+        # synced metadata. Skip with a clear message instead, and tell the
+        # user how to opt in.
+        if [[ $auto_yes -eq 1 || $dry_run -eq 1 ]]; then
+          echo "  ${_pc_yellow}[skip] $base (synced project needs interactive re-link)${_pc_reset}"
+          ((skipped++))
+          continue
+        fi
+        relink=1
+      else
+        # Real name collision: either different local path, or the existing
+        # entry is a remote project with the same basename.
+        local collision_info="$existing_path"
+        [[ "$existing_type" == "remote" ]] && collision_info="remote project"
+        if [[ $auto_yes -eq 1 || $dry_run -eq 1 ]]; then
+          echo "  ${_pc_yellow}[skip] $base (name collision with $collision_info)${_pc_reset}"
+          ((skipped++))
+          continue
+        fi
+        echo "  ${_pc_yellow}Name collision: $base already exists ($collision_info)${_pc_reset}"
+        printf "  New name for %s (empty to skip): " "$projpath"
+        read -r override
+        if [[ -z "$override" ]]; then
+          ((skipped++))
+          continue
+        fi
+        # Re-apply the same basename validation: override must round-trip
+        # through _proj_names (no whitespace, leading dot, or special chars).
+        if [[ ! "$override" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+          echo "  ${_pc_red}$override has invalid characters. Skipping.${_pc_reset}"
+          ((skipped++))
+          continue
+        fi
+        if _proj_exists "$override"; then
+          echo "  ${_pc_red}$override also exists. Skipping.${_pc_reset}"
+          ((skipped++))
+          continue
+        fi
+        base="$override"
+      fi
+    fi
+
+    if [[ $dry_run -eq 1 ]]; then
+      if [[ $relink -eq 1 ]]; then
+        echo "  ${_pc_cyan}[dry-run] would re-link $base → $projpath${_pc_reset}"
+      else
+        echo "  ${_pc_cyan}[dry-run] would add $base → $projpath${_pc_reset}"
+      fi
+      continue
+    fi
+
+    if [[ $auto_yes -eq 0 ]]; then
+      local verb="Add"
+      [[ $relink -eq 1 ]] && verb="Re-link"
+      printf "  %s %s → %s? [y/N/a/q] " "$verb" "$base" "$projpath"
+      read -r reply
+      case "$reply" in
+        a|A) auto_yes=1 ;;
+        q|Q) echo "${_pc_dim}Aborted.${_pc_reset}"; break ;;
+        y|Y) ;;
+        *) ((skipped++)); continue ;;
+      esac
+    fi
+
+    if [[ $relink -eq 1 ]]; then
+      # Re-link: only write the per-machine path, keep synced metadata intact.
+      _proj_set "$base" "path" "$projpath"
+      echo "  ${_pc_green}✓ re-linked $base${_pc_reset}"
+      ((relinked++))
+    else
+      _proj_set "$base" "path" "$projpath"
+      _proj_set "$base" "type" "local"
+      _proj_set "$base" "status" "active"
+      _proj_set "$base" "updated" "$(date '+%Y-%m-%d %H:%M')"
+      _proj_set "$base" "desc" ""
+      _proj_set "$base" "progress" ""
+      _proj_set "$base" "todo" ""
+      echo "  ${_pc_green}✓ added $base${_pc_reset}"
+      ((added++))
+    fi
+    registered_names+=("$base")
+  done
+
+  if [[ $dry_run -eq 1 ]]; then
+    echo ""
+    echo "${_pc_dim}Dry run — no changes made.${_pc_reset}"
+    return 0
+  fi
+
+  echo ""
+  if (( relinked > 0 )); then
+    echo "${_pc_green}$(_t import_done_relink "$added" "$relinked" "$skipped")${_pc_reset}"
+  else
+    echo "${_pc_green}$(_t import_done "$added" "$skipped")${_pc_reset}"
+  fi
+}
+
 # ── proj go ──
 _proj_go() {
   local target="$1"
@@ -1245,7 +2068,7 @@ _proj_cc() {
 # ── Tab 补全 ──
 _proj_completion() {
   local -a subcmds projects
-  subcmds=(add rm list go cc scan status edit config count help)
+  subcmds=(add rm list go cc scan status edit config count stale import tag untag tags doctor history help)
 
   if [[ $CURRENT -eq 2 ]]; then
     _describe 'command' subcmds
@@ -1254,7 +2077,7 @@ _proj_completion() {
 
   if [[ $CURRENT -eq 3 ]]; then
     case "${words[2]}" in
-      go|cc|rm|remove|scan|status|edit|s)
+      go|cc|rm|remove|scan|status|edit|s|tag|untag|history)
         projects=(${(f)"$(_proj_names)"})
         _describe 'project' projects
         ;;
@@ -1265,6 +2088,10 @@ _proj_completion() {
       config|cfg)
         local -a cfgkeys=(lang)
         _describe 'config key' cfgkeys
+        ;;
+      stale)
+        local -a windows=(7 30 90)
+        _describe 'days' windows
         ;;
     esac
   fi
@@ -1284,6 +2111,28 @@ _proj_completion() {
   if [[ $CURRENT -eq 4 && "${words[2]}" == "edit" ]]; then
     local -a fields=(desc path progress todo)
     _describe 'field' fields
+  fi
+  if [[ $CURRENT -ge 4 && "${words[2]}" == "tag" ]]; then
+    # Suggest all globally used tags. Use (@f) to split on newlines only so
+    # that tags with any weird characters can't trigger globbing or word
+    # splitting even if validation is bypassed somehow.
+    local -a all_tags=()
+    local n
+    for n in "${(@f)$(_proj_names 2>/dev/null)}"; do
+      [[ -z "$n" ]] && continue
+      [[ -f "$PROJ_DATA/$n/tags" ]] || continue
+      all_tags+=("${(@f)$(<"$PROJ_DATA/$n/tags")}")
+    done
+    all_tags=(${(u)all_tags})
+    _describe 'tag' all_tags
+  fi
+  if [[ $CURRENT -ge 4 && "${words[2]}" == "untag" ]]; then
+    # Suggest tags specific to this project. Same (@f) hardening as above.
+    local pname="${words[3]}"
+    if [[ -n "$pname" && -f "$PROJ_DATA/$pname/tags" ]]; then
+      local -a proj_tags=("${(@f)$(<"$PROJ_DATA/$pname/tags")}")
+      _describe 'tag' proj_tags
+    fi
   fi
 }
 (( $+functions[compdef] )) && compdef _proj_completion proj
