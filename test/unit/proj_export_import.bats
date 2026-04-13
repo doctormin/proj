@@ -214,3 +214,122 @@ JSON
   assert_equal "$(proj_field srv-1 host)" "user@ai4s"
   assert_equal "$(proj_field srv-1 remote_path)" "/srv/proj"
 }
+
+# ── regression coverage from round 1 review ─────────────────────────────
+
+@test "proj export: empty project list reports 'Exported 0 projects'" {
+  run proj export "$TEST_HOME/backup.json"
+  assert_success
+  assert_output --partial "Exported 0 projects"
+}
+
+@test "proj import --force: flipping remote→local wipes stale host/remote_path" {
+  # Seed as remote
+  proj list >/dev/null
+  mkdir -p "$HOME/.proj/data/foo"
+  echo "remote" > "$HOME/.proj/data/foo/type"
+  echo "active" > "$HOME/.proj/data/foo/status"
+  echo "user@old" > "$HOME/.proj/data/foo/host"
+  echo "/srv/old" > "$HOME/.proj/data/foo/remote_path"
+  echo "2026-01-01 00:00" > "$HOME/.proj/data/foo/updated"
+
+  # Hand-craft a JSON where foo is now local.
+  cat > "$TEST_HOME/backup.json" <<JSON
+{
+  "schema_version": "2",
+  "projects": [
+    {"name":"foo","type":"local","status":"active","path":"/tmp/foo",
+     "desc":"","progress":"","todo":"","updated":"2026-04-13 12:00",
+     "host":"","remote_path":"","tags":[],"has_history":false}
+  ]
+}
+JSON
+
+  run proj import "$TEST_HOME/backup.json" --force
+  assert_success
+  assert_output --partial "overwritten"
+  assert_equal "$(proj_field foo type)" "local"
+  # Stale remote fields MUST be gone.
+  [ ! -f "$(proj_data_dir)/foo/host" ]
+  [ ! -f "$(proj_data_dir)/foo/remote_path" ]
+}
+
+@test "proj import: symlinked project dir is refused (defense against write-redirect)" {
+  proj list >/dev/null
+  mkdir -p "$TEST_HOME/elsewhere"
+  ln -s "$TEST_HOME/elsewhere" "$HOME/.proj/data/evil"
+
+  cat > "$TEST_HOME/backup.json" <<'JSON'
+{
+  "schema_version": "2",
+  "projects": [
+    {"name":"evil","type":"local","status":"active","path":"/tmp/evil",
+     "desc":"","progress":"","todo":"","updated":"2026-04-13 12:00",
+     "host":"","remote_path":"","tags":[],"has_history":false}
+  ]
+}
+JSON
+
+  run proj import "$TEST_HOME/backup.json" --force
+  assert_success
+  assert_output --partial "symlinked"
+  # Nothing should have been written into the symlink target.
+  [ -z "$(ls -A "$TEST_HOME/elsewhere" 2>/dev/null)" ]
+}
+
+@test "proj import: unknown schema_version is refused" {
+  cat > "$TEST_HOME/future.json" <<'JSON'
+{"schema_version":"99","projects":[]}
+JSON
+  run proj import "$TEST_HOME/future.json"
+  assert_failure
+  assert_output --partial "schema version"
+}
+
+@test "proj import: tags as null is accepted (no existing tags wiped silently)" {
+  # A null tags field is valid — treat as empty list.
+  cat > "$TEST_HOME/backup.json" <<'JSON'
+{
+  "schema_version": "2",
+  "projects": [
+    {"name":"foo","type":"local","status":"active","path":"/tmp/foo",
+     "desc":"","progress":"","todo":"","updated":"2026-04-13 12:00",
+     "host":"","remote_path":"","tags":null,"has_history":false}
+  ]
+}
+JSON
+  run proj import "$TEST_HOME/backup.json"
+  assert_success
+  [ -d "$(proj_data_dir)/foo" ]
+}
+
+@test "proj import: tags as string is rejected with a clean error" {
+  cat > "$TEST_HOME/backup.json" <<'JSON'
+{
+  "schema_version": "2",
+  "projects": [
+    {"name":"foo","type":"local","status":"active","path":"/tmp/foo",
+     "desc":"","progress":"","todo":"","updated":"2026-04-13 12:00",
+     "host":"","remote_path":"","tags":"work,client","has_history":false}
+  ]
+}
+JSON
+  run proj import "$TEST_HOME/backup.json"
+  assert_success
+  assert_output --partial "tags field must be an array"
+  [ ! -d "$(proj_data_dir)/foo" ]
+}
+
+@test "proj export: field with newlines and quotes round-trips through JSON" {
+  _add foo
+  proj edit foo desc 'a "quoted" string
+with newline' >/dev/null
+  proj export "$TEST_HOME/backup.json" >/dev/null
+  rm -rf "$(proj_data_dir)/foo"
+
+  run proj import "$TEST_HOME/backup.json"
+  assert_success
+  local desc; desc="$(proj_field foo desc)"
+  [[ "$desc" == *'quoted'* ]]
+  [[ "$desc" == *'newline'* ]]
+}

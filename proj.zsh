@@ -133,6 +133,9 @@ _proj_i18n_en() {
     import_bad_json    "Not a valid proj export file (missing .projects array): %s"
     import_skip_invalid "Skipping entry with invalid name: '%s'"
     import_skip_exists "Skipping existing project: '%s' (use --force to overwrite)"
+    import_skip_symlink "Refusing to import into symlinked project dir: '%s'"
+    import_skip_bad_tags "Skipping '%s': tags field must be an array, got %s"
+    import_bad_schema  "Unsupported export schema version: '%s' (expected '2')"
     import_json_done   "Import complete: %s imported, %s skipped, %s overwritten."
     import_no_zoxide   "proj import zoxide needs zoxide installed and populated."
     import_zoxide_empty "zoxide returned no usable directories."
@@ -288,6 +291,9 @@ _proj_i18n_zh() {
     import_bad_json    "不是合法的 proj 导出文件（缺少 .projects 数组）: %s"
     import_skip_invalid "跳过名称非法的条目: '%s'"
     import_skip_exists "跳过已有项目: '%s'（使用 --force 覆盖）"
+    import_skip_symlink "拒绝导入到符号链接目录: '%s'"
+    import_skip_bad_tags "跳过 '%s': tags 字段必须是数组，实际是 %s"
+    import_bad_schema  "不支持的导出 schema 版本: '%s'（期望 '2'）"
     import_json_done   "导入完成: 新增 %s 个，跳过 %s 个，覆盖 %s 个。"
     import_no_zoxide   "proj import zoxide 需要已安装并有数据的 zoxide。"
     import_zoxide_empty "zoxide 没有返回可用的目录。"
@@ -2424,7 +2430,10 @@ _proj_export() {
     return 1
   fi
 
+  # Filter out the sentinel empty element that zsh's (@f) split of an
+  # empty command substitution produces when there are no projects.
   local -a names=("${(@f)$(_proj_names)}")
+  names=("${(@)names:#}")
   local sv="2"
   [[ -f "$PROJ_DIR/schema_version" ]] \
     && sv="$(tr -d '[:space:]' < "$PROJ_DIR/schema_version" 2>/dev/null)"
@@ -2538,6 +2547,16 @@ _proj_import_json() {
     return 1
   fi
 
+  # Validate schema_version: we only understand "2". Unknown versions are
+  # refused up front rather than silently fabricating defaults for fields
+  # a future or legacy format may lay out differently.
+  local sv_in
+  sv_in=$(jq -r '.schema_version // ""' "$file" 2>/dev/null)
+  if [[ -n "$sv_in" && "$sv_in" != "2" ]]; then
+    echo "${_pc_red}$(_t import_bad_schema "$sv_in")${_pc_reset}"
+    return 1
+  fi
+
   local imported=0 skipped=0 overwritten=0 proj_json
   while IFS= read -r proj_json; do
     local name type_ status_ updated_ desc_ progress_ todo_ path_ host_ rpath_
@@ -2545,6 +2564,27 @@ _proj_import_json() {
     if [[ -z "$name" ]] \
        || [[ ! "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
       echo "${_pc_yellow}$(_t import_skip_invalid "$name")${_pc_reset}"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    # Defense in depth: refuse to write through a symlink planted at
+    # $PROJ_DATA/$name. _proj_exists follows symlinks, so an attacker
+    # (or a confused previous session) could point the project dir at
+    # an arbitrary target and _proj_set would redirect every field
+    # write. Real project dirs are always plain directories.
+    if [[ -L "$PROJ_DATA/$name" ]]; then
+      echo "${_pc_red}$(_t import_skip_symlink "$name")${_pc_reset}"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    # Validate tags shape before touching any files so a null/string
+    # tags field cannot silently wipe an existing tags file.
+    local tags_kind
+    tags_kind=$(print -r -- "$proj_json" | jq -r '.tags | type')
+    if [[ "$tags_kind" != "array" && "$tags_kind" != "null" ]]; then
+      echo "${_pc_yellow}$(_t import_skip_bad_tags "$name" "$tags_kind")${_pc_reset}"
       skipped=$((skipped + 1))
       continue
     fi
@@ -2569,6 +2609,19 @@ _proj_import_json() {
     host_=$(print -r -- "$proj_json" | jq -r '.host // ""')
     rpath_=$(print -r -- "$proj_json" | jq -r '.remote_path // ""')
 
+    # On force-overwrite, clear the old project's data files first so
+    # stale remote/local fields from a type flip cannot leak through.
+    # path.<machine-id> is kept — the importing machine will rewrite
+    # it via _proj_set immediately after.
+    if (( was_present && force )); then
+      mkdir -p "$PROJ_DATA/$name"
+      rm -f "$PROJ_DATA/$name"/{type,status,updated,desc,progress,todo,host,remote_path,tags} 2>/dev/null
+      # Also wipe any stale path.<mid> files from prior machines — the
+      # imported record carries a single path that the next _proj_set
+      # below will write under this machine's mid.
+      rm -f "$PROJ_DATA/$name"/path.* 2>/dev/null
+    fi
+
     _proj_set "$name" "type" "$type_"
     _proj_set "$name" "status" "$status_"
     [[ -n "$updated_" ]] && _proj_set "$name" "updated" "$updated_"
@@ -2579,9 +2632,13 @@ _proj_import_json() {
     [[ -n "$host_" ]] && _proj_set "$name" "host" "$host_"
     [[ -n "$rpath_" ]] && _proj_set "$name" "remote_path" "$rpath_"
 
-    # Tags: overwrite from the JSON list (empty list → remove tags file).
+    # Tags: overwrite from the JSON list (empty/null list → remove tags file).
     local tags_count
-    tags_count=$(print -r -- "$proj_json" | jq -r '.tags | length')
+    if [[ "$tags_kind" == "array" ]]; then
+      tags_count=$(print -r -- "$proj_json" | jq -r '.tags | length')
+    else
+      tags_count=0
+    fi
     if (( tags_count > 0 )); then
       mkdir -p "$PROJ_DATA/$name"
       print -r -- "$proj_json" | jq -r '.tags[]' > "$PROJ_DATA/$name/tags"
@@ -2606,13 +2663,22 @@ _proj_import_zoxide() {
   fi
 
   local -a candidates=()
-  local score path_
-  while read -r score path_; do
+  local line path_
+  # zoxide prints `<score> <path>` with whitespace separation. A plain
+  # `read -r score path_` would split on any whitespace run, truncating
+  # paths that contain spaces (common on macOS). Read the whole line
+  # instead and strip the leading score + whitespace manually.
+  while IFS= read -r line; do
+    # Drop the leading score field and any spaces/tabs that follow it.
+    path_="${line#*[[:space:]]}"
+    while [[ "$path_" == [[:space:]]* ]]; do path_="${path_# }"; path_="${path_#	}"; done
     [[ -z "$path_" ]] && continue
     # Skip $HOME itself, dotfile paths, and system paths.
     [[ "$path_" == "$HOME" ]] && continue
     [[ "$(basename "$path_")" == .* ]] && continue
-    [[ "$path_" == /tmp/* || "$path_" == /var/* || "$path_" == /usr/* ]] && continue
+    [[ "$path_" == /tmp/* || "$path_" == /var/* || "$path_" == /usr/* \
+       || "$path_" == /etc/* || "$path_" == /opt/* || "$path_" == /srv/* \
+       || "$path_" == /root/* || "$path_" == /private/* ]] && continue
     [[ ! -d "$path_" ]] && continue
     candidates+=("$path_")
     (( ${#candidates} >= 20 )) && break
