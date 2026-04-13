@@ -123,3 +123,25 @@ preview() {
   assert_success
   assert_output --partial "No local path"
 }
+
+@test "preview renders tag chips when tags file exists" {
+  mkdir -p "$HOME/workspace/tagged"
+  run proj add tagged "$HOME/workspace/tagged"
+  run proj tag tagged work deploy
+  assert_success
+
+  run preview tagged
+  assert_success
+  assert_output --partial "Tags:"
+  assert_output --partial "#deploy"
+  assert_output --partial "#work"
+}
+
+@test "preview omits Tags line when no tags set" {
+  mkdir -p "$HOME/workspace/untagged"
+  run proj add untagged "$HOME/workspace/untagged"
+
+  run preview untagged
+  assert_success
+  refute_output --partial "Tags:"
+}

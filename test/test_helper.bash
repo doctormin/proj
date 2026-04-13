@@ -76,6 +76,22 @@ proj_yes() {
   echo "y" | zsh -c 'source "$1" && shift && proj "$@"' _proj_test "$PROJ_ROOT/proj.zsh" "$@"
 }
 
+# proj_after(): run setup code inside the same zsh subshell that sources
+# proj.zsh, THEN dispatch `proj <args>`. Needed when a test must manipulate
+# ~/.proj state (e.g., schema_version) AFTER the source-time auto-migrate
+# runs but BEFORE the proj command executes.
+#
+# Usage: run proj_after 'echo "1" > "$HOME/.proj/schema_version"' doctor
+proj_after() {
+  local setup="$1"
+  shift
+  SETUP_CODE="$setup" zsh -c '
+    source "$1"; shift
+    eval "$SETUP_CODE"
+    proj "$@"
+  ' _proj_test "$PROJ_ROOT/proj.zsh" "$@"
+}
+
 # make_bare_repo(): create an empty bare git repo at $1 for sync tests.
 # Returns a file:// URL usable as sync_repo.
 make_bare_repo() {
