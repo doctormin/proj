@@ -1,0 +1,37 @@
+# test/docker/Dockerfile.ubuntu24 — local reproduction of the CI Ubuntu 24.04 job.
+#
+# Identical to Dockerfile.ubuntu22 except for the base image. Ubuntu 24.04
+# ships newer coreutils (GNU sed 4.9, GNU stat from 9.4) and zsh 5.9, so
+# this variant catches any regressions that only surface on the newer stack.
+#
+# Build + run:
+#   docker build -f test/docker/Dockerfile.ubuntu24 -t proj-test-u24 .
+#   docker run --rm proj-test-u24
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/root
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        zsh \
+        fzf \
+        jq \
+        git \
+        ca-certificates \
+        lsb-release && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install bats-core 1.13.0 from source (matches local + CI).
+RUN git clone --depth 1 --branch v1.13.0 \
+        https://github.com/bats-core/bats-core.git /tmp/bats-core && \
+    /tmp/bats-core/install.sh /usr/local && \
+    rm -rf /tmp/bats-core
+
+WORKDIR /app
+
+COPY proj.zsh preview.sh install.sh uninstall.sh /app/
+COPY test /app/test
+
+CMD ["bash", "/app/test/docker/smoke.sh"]

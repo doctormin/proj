@@ -1,0 +1,43 @@
+# test/docker/Dockerfile.ubuntu22 — local reproduction of the CI Ubuntu 22.04 job.
+#
+# Use this to verify proj works on Linux without pushing to GitHub. The image
+# is disposable and keeps all proj state inside the container. See
+# test/docker/run.sh for the convenience driver.
+#
+# Build context is the repo root, so relative COPY paths work.
+#
+# Build + run:
+#   docker build -f test/docker/Dockerfile.ubuntu22 -t proj-test-u22 .
+#   docker run --rm proj-test-u22
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/root
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        zsh \
+        fzf \
+        jq \
+        git \
+        ca-certificates \
+        lsb-release && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install bats-core 1.13.0 from source so it matches the local dev version
+# and the CI workflow. apt's bats on Ubuntu 22.04 is 1.2, too old for our
+# vendored bats-assert helpers.
+RUN git clone --depth 1 --branch v1.13.0 \
+        https://github.com/bats-core/bats-core.git /tmp/bats-core && \
+    /tmp/bats-core/install.sh /usr/local && \
+    rm -rf /tmp/bats-core
+
+WORKDIR /app
+
+# Selective COPY: everything the container needs, nothing it doesn't.
+# No .dockerignore required because we name exactly the files we care about.
+COPY proj.zsh preview.sh install.sh uninstall.sh /app/
+COPY test /app/test
+
+CMD ["bash", "/app/test/docker/smoke.sh"]
