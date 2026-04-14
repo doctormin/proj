@@ -3,20 +3,40 @@
 #
 # Real fzf reads stdin and presents an interactive TUI. In tests we can't do
 # that, so we replay a canned response from env vars:
-#   FZF_TEST_RESPONSE      — the exact string fzf would emit as "user's pick"
-#   FZF_TEST_EXIT          — exit code (default 0; 130 simulates user pressing Esc)
 #
-# Tests that exercise _proj_interactive set FZF_TEST_RESPONSE before calling.
-# Tests that don't care about fzf can ignore this stub entirely.
+#   FZF_TEST_RESPONSE      — single response, emitted every call
+#   FZF_TEST_RESPONSES     — newline-separated queue. The Nth invocation
+#                            returns the Nth line. Requires a writable state
+#                            file at $FZF_TEST_STATE (or falls back to
+#                            /tmp/fzf-mock-state.$$). Takes precedence over
+#                            FZF_TEST_RESPONSE when both are set.
+#   FZF_TEST_EXIT          — exit code (default 0; 130 simulates Esc)
+#   FZF_CALLS_LOG          — optional path to append each invocation's argv
+#                            (one line per call) so tests can assert how
+#                            proj.zsh invoked fzf
 #
 # We still read stdin fully so upstream pipes don't SIGPIPE.
 
 set -e
 
+# Log the argv so tests can inspect bindings / labels.
+if [[ -n "$FZF_CALLS_LOG" ]]; then
+  echo "fzf $*" >> "$FZF_CALLS_LOG"
+fi
+
 # Drain stdin regardless of whether we use it.
 cat > /dev/null
 
-if [[ -n "$FZF_TEST_RESPONSE" ]]; then
+if [[ -n "$FZF_TEST_RESPONSES" ]]; then
+  # Queue mode: pop the Nth line. State tracked per env invocation under
+  # a file tests can override with $FZF_TEST_STATE.
+  state_file="${FZF_TEST_STATE:-/tmp/fzf-mock-state.$PPID}"
+  idx=$(cat "$state_file" 2>/dev/null || echo 0)
+  idx=$((idx + 1))
+  echo "$idx" > "$state_file"
+  line=$(echo "$FZF_TEST_RESPONSES" | sed -n "${idx}p")
+  printf '%s\n' "$line"
+elif [[ -n "$FZF_TEST_RESPONSE" ]]; then
   printf '%s\n' "$FZF_TEST_RESPONSE"
 fi
 
