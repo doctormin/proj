@@ -99,6 +99,15 @@ install_files() {
   cp "$REPO_DIR/bin/proj" "$PROJ_DIR/bin/proj"
   chmod +x "$PROJ_DIR/preview.sh"
   chmod +x "$PROJ_DIR/bin/proj"
+
+  # Bundle scaffolding templates for `proj new <template>`. Idempotent —
+  # cp -R over an existing tree just overwrites our bundled ones; any
+  # user-added templates next to them are left alone.
+  if [[ -d "$REPO_DIR/templates" ]]; then
+    mkdir -p "$PROJ_DIR/templates"
+    cp -R "$REPO_DIR/templates/." "$PROJ_DIR/templates/"
+  fi
+
   echo "$PROJ_VERSION" > "$PROJ_DIR/version"
   info "Files installed to $PROJ_DIR"
 }

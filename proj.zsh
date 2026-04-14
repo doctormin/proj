@@ -129,6 +129,16 @@ _proj_i18n_en() {
     clone_name_collision "A project named '%s' already exists. Rename or remove it before re-cloning."
     clone_bad_target   "Refusing target path that begins with '-' (would be parsed as a git option): %s"
     clone_mkdir_failed "Cannot create parent directory: %s"
+    usage_new          "Usage: proj new <template> <name> [target-dir]"
+    new_template_invalid "Invalid template name (must be alnum, _ or -)."
+    new_template_not_found "Template not found: %s
+Available: %s"
+    new_name_invalid   "Invalid project name. Use only letters, digits, '.', '_', '-'."
+    new_target_exists  "Target directory already exists: %s"
+    new_already_registered "A project named '%s' already exists. Remove or rename it first."
+    new_init_failed    "Template init script failed — target directory rolled back."
+    new_created        "✓ Created %s at %s"
+    help_new           "Create new project from bundled template"
     export_no_jq       "proj export needs jq. Install it: brew install jq (or your package manager)."
     export_saved       "✓ Exported %s projects → %s"
     export_write_failed "Failed to write export file: %s"
@@ -310,6 +320,16 @@ _proj_i18n_zh() {
     clone_name_collision "已经存在同名项目 '%s'。请先重命名或删除再重新克隆。"
     clone_bad_target   "目标路径以 '-' 开头会被 git 解析为选项，已拒绝: %s"
     clone_mkdir_failed "无法创建父目录: %s"
+    usage_new          "用法: proj new <template> <name> [target-dir]"
+    new_template_invalid "模板名非法（仅限字母数字、_ 或 -）。"
+    new_template_not_found "找不到模板: %s
+可用模板: %s"
+    new_name_invalid   "项目名非法。只能使用字母、数字、'.'、'_'、'-'。"
+    new_target_exists  "目标目录已存在: %s"
+    new_already_registered "已经存在同名项目 '%s'。请先删除或改名。"
+    new_init_failed    "模板初始化脚本失败 —— 已回滚目标目录。"
+    new_created        "✓ 已创建 %s 于 %s"
+    help_new           "从内置模板创建新项目"
     export_no_jq       "proj export 需要 jq。请先安装: brew install jq（或使用你的包管理器）。"
     export_saved       "✓ 已导出 %s 个项目 → %s"
     export_write_failed "写入导出文件失败: %s"
@@ -736,6 +756,118 @@ _proj_github_clone() {
   # Register as a normal local project. We already verified the name is
   # unused above, so the recursion will not hit the "already exists" branch.
   _proj_add "$repo_name" "$target"
+}
+
+# ── proj new <template> <name> [target] ──
+# Scaffold a new local project from a bundled template directory, run its
+# optional `.proj-init.sh` hook, and register the result via _proj_add.
+# Templates live under $PROJ_DIR/templates/<template>/; $PROJ_TEMPLATE_DIR
+# overrides the parent for tests. The placeholder string is the literal
+# word NAME — .proj-init.sh substitutes it across files.
+_proj_new() {
+  local template="$1"
+  local name="$2"
+  local target="$3"
+
+  if [[ -z "$template" || -z "$name" ]]; then
+    echo "${_pc_yellow}$(_t usage_new)${_pc_reset}"
+    return 1
+  fi
+
+  # Validate template name first so a bad value can't traverse paths or
+  # flow into a shell (dir lookup only, but defense in depth is cheap).
+  if [[ ! "$template" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+    echo "${_pc_red}$(_t new_template_invalid)${_pc_reset}"
+    return 1
+  fi
+
+  local tpl_root="${PROJ_TEMPLATE_DIR:-$PROJ_DIR/templates}"
+  local src="$tpl_root/$template"
+  if [[ ! -d "$src" ]]; then
+    local available=""
+    if [[ -d "$tpl_root" ]]; then
+      available=$(ls -1 "$tpl_root" 2>/dev/null | tr '\n' ' ')
+    fi
+    [[ -z "$available" ]] && available="(none)"
+    echo "${_pc_red}$(_t new_template_not_found "$template" "$available")${_pc_reset}"
+    return 1
+  fi
+
+  # Validate project name. Same basename regex used across the codebase;
+  # reject leading `-` / `..` / whitespace so $name can flow through cp
+  # and shell args without quoting surprises.
+  if [[ ! "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ || "$name" == *..* ]]; then
+    echo "${_pc_red}$(_t new_name_invalid)${_pc_reset}"
+    return 1
+  fi
+
+  # Tombstone / existing-project guard. _proj_exists covers the common
+  # path; the explicit dir check also catches half-baked leftovers.
+  if _proj_exists "$name" || [[ -d "$PROJ_DATA/$name" ]]; then
+    echo "${_pc_red}$(_t new_already_registered "$name")${_pc_reset}"
+    return 1
+  fi
+
+  # Resolve target directory. Precedence mirrors _proj_github_clone:
+  #   explicit $3 > $PROJ_CLONE_DIR/<name> > $(pwd)/<name>.
+  if [[ -z "$target" ]]; then
+    if [[ -n "${PROJ_CLONE_DIR:-}" ]]; then
+      target="$PROJ_CLONE_DIR/$name"
+    else
+      target="$(pwd)/$name"
+    fi
+  fi
+  target="${target/#\~/$HOME}"
+
+  # Refuse a target that starts with `-` (would parse as an option in
+  # any downstream command). Matches the C1 clone helper's defense.
+  if [[ "$target" == -* ]]; then
+    echo "${_pc_red}$(_t new_target_exists "$target")${_pc_reset}"
+    return 1
+  fi
+
+  # Never clobber an existing target — too destructive to guess at.
+  if [[ -e "$target" ]]; then
+    echo "${_pc_red}$(_t new_target_exists "$target")${_pc_reset}"
+    return 1
+  fi
+
+  if ! mkdir -p -- "$(dirname -- "$target")" 2>/dev/null; then
+    echo "${_pc_red}$(_t clone_mkdir_failed "$(dirname -- "$target")")${_pc_reset}"
+    return 1
+  fi
+  if ! mkdir -- "$target" 2>/dev/null; then
+    echo "${_pc_red}$(_t new_target_exists "$target")${_pc_reset}"
+    return 1
+  fi
+
+  # Copy template contents (including dotfiles) into the target. The
+  # trailing `/.` on the source means cp copies the CONTENTS of src,
+  # not src itself — the dotfiles come along on both BSD and GNU cp.
+  if ! cp -R -- "$src/." "$target/" 2>/dev/null; then
+    rm -rf -- "$target"
+    echo "${_pc_red}$(_t new_init_failed)${_pc_reset}"
+    return 1
+  fi
+
+  # Run the optional init hook from inside the target. The hook is
+  # expected to be idempotent and self-cleaning; we rm -f it after
+  # regardless, so a template author can't accidentally leak it.
+  if [[ -f "$target/.proj-init.sh" ]]; then
+    if ! ( cd -- "$target" && bash ./.proj-init.sh "$name" "$target" ); then
+      rm -rf -- "$target"
+      echo "${_pc_red}$(_t new_init_failed)${_pc_reset}"
+      return 1
+    fi
+    rm -f -- "$target/.proj-init.sh"
+  fi
+
+  echo "${_pc_green}$(_t new_created "${_pc_bold}$name${_pc_reset}${_pc_green}" "$target")${_pc_reset}"
+
+  # Register as a normal local project. _proj_add also triggers the
+  # AI scan (or silently skips it when claude is not on PATH), so we
+  # don't call _proj_scan_with_claude again here.
+  _proj_add "$name" "$target"
 }
 
 # ── proj add-remote ──
@@ -2056,6 +2188,7 @@ proj() {
   case "$cmd" in
     add)       _proj_add "$@" ;;
     add-remote) _proj_add_remote "$@" ;;
+    new)       _proj_new "$@" ;;
     rm|remove) _proj_rm "$@" ;;
     ls|list)   _proj_list "$@" ;;
     go|cd)     _proj_go "$@" ;;
@@ -2090,6 +2223,7 @@ proj() {
       echo ""
       echo "  ${_pc_cyan}proj${_pc_reset}                          ${_i[help_open]}"
       echo "  ${_pc_cyan}proj add [name] [path]${_pc_reset}        ${_i[help_add]}"
+      echo "  ${_pc_cyan}proj new <template> <name> [dir]${_pc_reset}  ${_i[help_new]}"
       echo "  ${_pc_cyan}proj rm <name>${_pc_reset}                ${_i[help_rm]}"
       echo "  ${_pc_cyan}proj cc [name]${_pc_reset}               ${_i[help_cc]}"
       echo "  ${_pc_cyan}proj code [name]${_pc_reset}             ${_i[help_code]}"
@@ -3473,7 +3607,7 @@ _proj_code() {
 # ── Tab 补全 ──
 _proj_completion() {
   local -a subcmds projects
-  subcmds=(add rm list go cc code scan status edit config count stale import export tag untag tags doctor history help)
+  subcmds=(add new rm list go cc code scan status edit config count stale import export tag untag tags doctor history help)
 
   if [[ $CURRENT -eq 2 ]]; then
     _describe 'command' subcmds
@@ -3498,7 +3632,25 @@ _proj_completion() {
         local -a windows=(7 30 90)
         _describe 'days' windows
         ;;
+      new)
+        # First arg after `new` = template name. Enumerate directories
+        # under $PROJ_TEMPLATE_DIR / $PROJ_DIR/templates/. Filter to
+        # readable dirs so half-installed trees don't throw errors.
+        local tpl_root="${PROJ_TEMPLATE_DIR:-${PROJ_DIR:-$HOME/.proj}/templates}"
+        local -a tpls=()
+        if [[ -d "$tpl_root" ]]; then
+          local t
+          for t in "$tpl_root"/*(/N); do
+            tpls+=("${t:t}")
+          done
+        fi
+        _describe 'template' tpls
+        ;;
     esac
+  fi
+  if [[ $CURRENT -eq 5 && "${words[2]}" == "new" ]]; then
+    # Third arg (target dir): complete directories.
+    _files -/
   fi
 
   if [[ $CURRENT -eq 4 && ( "${words[2]}" == "config" || "${words[2]}" == "cfg" ) ]]; then
