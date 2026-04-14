@@ -321,3 +321,142 @@ d"
   run proj :active
   [[ "$(cat "$FZF_CALLS_LOG")" == *":active"* ]] || false
 }
+
+# ── regression tests from round 1 review ──────────────────────────────
+
+@test "_proj_names filters out dirs that fail the basename regex" {
+  _add foo
+  # Plant a legacy / hand-created dir with whitespace.
+  mkdir -p "$(proj_data_dir)/bad name"
+  echo active > "$(proj_data_dir)/bad name/status"
+  # Plant a ghost with leading colon that would collide with the filter
+  # prefix router.
+  mkdir -p "$(proj_data_dir)/:shadow"
+  echo active > "$(proj_data_dir)/:shadow/status"
+
+  run proj_helper _proj_names
+  assert_success
+  assert_line "foo"
+  refute_output --partial "bad name"
+  refute_output --partial ":shadow"
+}
+
+@test "panel batch-status: skips targets that were removed mid-flight" {
+  _add foo
+  _add bar
+  # Simulate a race: bar's data dir disappears between panel selection
+  # and the action loop. The fzf mock selects both but only foo exists.
+  rm -rf "$(proj_data_dir)/bar"
+  export FZF_TEST_RESPONSES=$'batch-status:foo bar\npaused'
+  export FZF_TEST_STATE="$HOME/fzf-state"
+
+  run proj
+  assert_success
+  assert_output --partial "bar"
+  assert_output --partial "no longer exists"
+  assert_equal "$(proj_field foo status)" "paused"
+  # bar must NOT have been resurrected as a zombie dir by _proj_set.
+  [ ! -d "$(proj_data_dir)/bar" ]
+}
+
+@test "panel batch-delete → Remove: 5+ projects requires typed count confirmation" {
+  local n
+  for n in p1 p2 p3 p4 p5; do _add "$n"; done
+  # Queue: the panel picks batch-delete, then the confirm picks Remove,
+  # then the typed-count prompt gets a wrong answer → abort.
+  export FZF_TEST_RESPONSES=$'batch-delete:p1 p2 p3 p4 p5\n✗ Remove project'
+  export FZF_TEST_STATE="$HOME/fzf-state"
+  # typed answer goes to stdin of the `read -r` call
+  run bash -c "echo wrong | zsh -c 'source \"\$1\" && proj' _proj_test \"$PROJ_ROOT/proj.zsh\""
+  assert_output --partial "aborted"
+  # All 5 projects still present.
+  for n in p1 p2 p3 p4 p5; do [ -d "$(proj_data_dir)/$n" ]; done
+}
+
+@test "panel batch-delete → Remove: small batch skips typed confirmation" {
+  local n
+  for n in a b; do _add "$n"; done
+  export FZF_TEST_RESPONSES=$'batch-delete:a b\n✗ Remove project'
+  export FZF_TEST_STATE="$HOME/fzf-state"
+  run proj
+  assert_success
+  [ ! -d "$(proj_data_dir)/a" ]
+  [ ! -d "$(proj_data_dir)/b" ]
+}
+
+@test "panel batch-delete → Remove: prints remote warning for remote entries" {
+  _add local1
+  _add_remote remote1
+  export FZF_TEST_RESPONSES=$'batch-delete:local1 remote1\n✗ Remove project'
+  export FZF_TEST_STATE="$HOME/fzf-state"
+  run proj
+  assert_success
+  assert_output --partial "remote project"
+  assert_output --partial "user@ai4s"
+  # Both local and remote metadata gone.
+  [ ! -d "$(proj_data_dir)/local1" ]
+  [ ! -d "$(proj_data_dir)/remote1" ]
+}
+
+@test "panel Ctrl-O: sort override stays scoped to the panel (no env leak)" {
+  _add foo
+  # First response cycles sort, second response exits with Esc (empty).
+  export FZF_TEST_RESPONSES=$'sort-next:foo\n'
+  export FZF_TEST_STATE="$HOME/fzf-state"
+  run bash -c "
+    unset _PROJ_SORT_OVERRIDE
+    zsh -c 'source \"\$1\" && proj && echo OVERRIDE=\${_PROJ_SORT_OVERRIDE-unset}' \
+      _proj_test \"$PROJ_ROOT/proj.zsh\"
+  "
+  assert_success
+  assert_output --partial "OVERRIDE=unset"
+}
+
+@test "panel: invalid sort= in config file falls back with a dim warning" {
+  _add foo
+  mkdir -p "$HOME/.proj"
+  echo "sort=bogus" >> "$HOME/.proj/config"
+  export FZF_CALLS_LOG="$HOME/fzf-calls.log"
+  : > "$FZF_CALLS_LOG"
+  export FZF_TEST_RESPONSE=""
+  run proj
+  assert_output --partial "Ignoring invalid"
+  # Header must reflect the fallback mode, not the bogus value.
+  [[ "$(cat "$FZF_CALLS_LOG")" == *"sort: updated"* ]] || false
+}
+
+@test "_proj_sort_names name: case-insensitive (legacy uppercase interleaves)" {
+  # Plant 3 names that would sort wrong under LC_ALL=C without -f.
+  _add apple
+  mkdir -p "$(proj_data_dir)/Zebra"
+  mkdir -p "$(proj_data_dir)/mango"
+  local out
+  out="$(printf '%s\n' apple Zebra mango | proj_helper _proj_sort_names name)"
+  local expected="apple
+mango
+Zebra"
+  assert_equal "$out" "$expected"
+}
+
+@test "_proj_sort_names progress: reads file size not content (no shell read of huge fields)" {
+  _add small
+  _add huge
+  # Put 1 KB into huge's progress field; small stays empty.
+  printf 'x%.0s' {1..1024} > "$(proj_data_dir)/huge/progress"
+  local out
+  out="$(printf '%s\n' small huge | proj_helper _proj_sort_names progress)"
+  # huge must come first (higher byte count).
+  local first_line; first_line="$(echo "$out" | head -1)"
+  assert_equal "$first_line" "huge"
+}
+
+@test "panel help: lists the new hotkeys and filter syntax" {
+  run proj help
+  assert_success
+  assert_output --partial "Tab"
+  assert_output --partial "Ctrl-S"
+  assert_output --partial "Ctrl-D"
+  assert_output --partial "Ctrl-O"
+  assert_output --partial ":active"
+  assert_output --partial ":tag="
+}

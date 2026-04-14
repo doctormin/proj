@@ -150,7 +150,13 @@ _proj_i18n_en() {
     batch_empty        "No projects selected. Press Tab to multi-select, then Ctrl-S / Ctrl-D."
     batch_status_label "Batch status (%s projects)"
     batch_delete_label "Batch delete (%s projects)"
+    batch_skip_gone    "Skipping '%s': project no longer exists."
+    batch_remote_warn  "Note: '%s' is a remote project; the checkout at %s stays put, only local metadata is removed."
+    batch_remove_confirm "You are about to permanently remove %s projects:"
+    batch_remove_prompt "Type %s to confirm:"
+    batch_remove_aborted "Batch remove aborted."
     cfg_bad_sort       "Invalid sort mode: '%s' (valid: updated, name, status, progress)"
+    cfg_bad_sort_fallback "[proj] Ignoring invalid config sort='%s', falling back to updated."
 
     # ── interactive panel ──
     panel_title        " 📋 Projects "
@@ -174,8 +180,14 @@ _proj_i18n_en() {
     help_key_cr        "Rescan project progress with Claude"
     help_key_cx        "Mark as done / Remove project"
     help_key_esc       "Exit"
+    help_key_tab       "Toggle multi-select on current row"
+    help_key_cs        "Batch status change (all Tab-selected)"
+    help_key_cd        "Batch delete / done (all Tab-selected)"
+    help_key_co        "Cycle sort: updated → name → status → progress"
     help_global        "Global hotkey: Ctrl+P = open interactive panel"
     help_config        "Configure proj settings"
+    help_filters_title "Smart filter prefix (opens panel pre-filtered):"
+    help_filters_body  "  proj :active | :paused | :blocked | :done\n  proj :stale | :missing | :unlinked\n  proj :remote | :local\n  proj :tag=<name>"
 
     # ── config ──
     cfg_title          " ⚙ Settings "
@@ -316,7 +328,13 @@ _proj_i18n_zh() {
     batch_empty        "没有选中项目。按 Tab 多选，再按 Ctrl-S / Ctrl-D。"
     batch_status_label "批量改状态 (%s 个项目)"
     batch_delete_label "批量删除 (%s 个项目)"
+    batch_skip_gone    "跳过 '%s': 项目已不存在。"
+    batch_remote_warn  "注意: '%s' 是远端项目，%s 上的检出保留，只移除本地元数据。"
+    batch_remove_confirm "你将永久删除 %s 个项目："
+    batch_remove_prompt "请输入 %s 确认："
+    batch_remove_aborted "已取消批量删除。"
     cfg_bad_sort       "非法的排序模式: '%s' （可选值: updated, name, status, progress）"
+    cfg_bad_sort_fallback "[proj] 忽略 config 里非法的 sort='%s'，回退到 updated。"
 
     # ── 交互面板 ──
     panel_title        " 📋 项目面板 "
@@ -340,8 +358,14 @@ _proj_i18n_zh() {
     help_key_cr        "让 Claude 重新分析项目进展"
     help_key_cx        "标记完成 / 删除项目"
     help_key_esc       "退出"
+    help_key_tab       "在当前行上切换多选"
+    help_key_cs        "批量改状态（所有 Tab 选中项）"
+    help_key_cd        "批量删除 / 完成（所有 Tab 选中项）"
+    help_key_co        "切换排序: updated → name → status → progress"
     help_global        "全局快捷键: Ctrl+P = 打开交互面板"
     help_config        "配置 proj 设置"
+    help_filters_title "智能过滤前缀（打开面板时预过滤）:"
+    help_filters_body  "  proj :active | :paused | :blocked | :done\n  proj :stale | :missing | :unlinked\n  proj :remote | :local\n  proj :tag=<名字>"
 
     # ── 配置 ──
     cfg_title          " ⚙ 设置 "
@@ -417,7 +441,14 @@ _proj_machine_id() {
 }
 
 # ── 工具函数 ──
-_proj_names() { ls "$PROJ_DATA" 2>/dev/null | grep -v '^\.' ; }
+_proj_names() {
+  # Filter through the same basename regex _proj_add enforces on write, so
+  # hand-planted dirs whose names contain whitespace, shell metachars, or
+  # a leading colon (which would collide with the `:filter` router) never
+  # surface into the panel or batch dispatch. Defense in depth against
+  # name-based injection into `${=target}` / fzf's `{+1}` placeholder.
+  ls "$PROJ_DATA" 2>/dev/null | grep -E '^[a-zA-Z0-9][a-zA-Z0-9._-]*$' || true
+}
 
 _proj_get() {
   # For "path" field, check path.<machine-id> first, fall back to legacy "path"
@@ -1453,7 +1484,9 @@ _proj_sort_names() {
   local n u ep rank p
   case "$mode" in
     name)
-      print -rl -- "${names[@]}" | LC_ALL=C sort
+      # Case-insensitive so legacy uppercase names interleave correctly
+      # with the lowercase-only names _proj_add now enforces.
+      print -rl -- "${names[@]}" | LC_ALL=C sort -f
       ;;
     updated)
       for n in "${names[@]}"; do
@@ -1480,9 +1513,17 @@ _proj_sort_names() {
       done | LC_ALL=C sort -t $'\t' -k1,1n -k2,2 | cut -f2-
       ;;
     progress)
+      # Use file size (via `wc -c`) instead of reading the progress field
+      # into a shell variable — a user who pastes a 10MB AI-generated
+      # plan into `proj edit progress` would otherwise hang every panel
+      # open. wc -c is O(1) per file, _proj_get-based length was O(size).
       for n in "${names[@]}"; do
-        p=$(_proj_get "$n" progress)
-        printf '%d\t%s\n' "${#p}" "$n"
+        local fsize=0 pf="$PROJ_DATA/$n/progress"
+        if [[ -f "$pf" ]]; then
+          fsize=$(wc -c <"$pf" 2>/dev/null | tr -d '[:space:]')
+          [[ -z "$fsize" ]] && fsize=0
+        fi
+        printf '%d\t%s\n' "$fsize" "$n"
       done | LC_ALL=C sort -t $'\t' -k1,1nr -k2,2 | cut -f2-
       ;;
     *)
@@ -1513,35 +1554,41 @@ _proj_interactive() {
     return 1
   fi
 
-  # Apply filter (C5). `filter` is either empty or a `:keyword` form.
-  local -a names=()
+  # Apply filter (C5) ONCE up front. `filter` is empty or a `:keyword`.
+  # The filtered set is kept in filtered_names — sort is re-applied on
+  # every Ctrl-O iteration but the filter only runs once.
+  local -a filtered_names=()
   if [[ -n "$filter" ]]; then
     local filter_out
     if ! filter_out="$(_proj_filter_names "$filter")"; then
       return 1
     fi
-    names=("${(@f)filter_out}")
+    filtered_names=("${(@f)filter_out}")
     # Strip trailing empty element produced by (@f) on empty substitution.
-    names=("${(@)names:#}")
+    filtered_names=("${(@)filtered_names:#}")
   else
-    names=("${(@f)$(_proj_names)}")
-    names=("${(@)names:#}")
+    filtered_names=("${(@f)$(_proj_names)}")
+    filtered_names=("${(@)filtered_names:#}")
   fi
 
-  # Sort (C6). Precedence: session override env var > configured default > updated.
+  # Resolve initial sort mode. Precedence: session override (set via a
+  # prior Ctrl-O within the current panel lifetime) > configured default
+  # > hard default `updated`. The override lives in a LOCAL variable so
+  # it cannot leak out of the panel into the user's interactive shell or
+  # into any subprocess `proj cc` spawns later.
   local sort_mode="${_PROJ_SORT_OVERRIDE:-$(_proj_cfg_get sort updated)}"
+  local sort_was_valid=1
   case "$sort_mode" in
     updated|name|status|progress) ;;
-    *) sort_mode="updated" ;;
+    *) sort_was_valid=0; sort_mode="updated" ;;
   esac
-  if (( ${#names} > 0 )); then
-    local sorted
-    sorted="$(print -rl -- "${names[@]}" | _proj_sort_names "$sort_mode")"
-    names=("${(@f)sorted}")
-    names=("${(@)names:#}")
+  # Warn once on an out-of-range configured value so a bad hand-edit of
+  # $HOME/.proj/config doesn't silently fall back without the user noticing.
+  if (( ! sort_was_valid )); then
+    echo "${_pc_dim}$(_t cfg_bad_sort_fallback "$(_proj_cfg_get sort updated)")${_pc_reset}" >&2
   fi
 
-  if [[ ${#names[@]} -eq 0 ]]; then
+  if [[ ${#filtered_names[@]} -eq 0 ]]; then
     echo ""
     if [[ -n "$filter" ]]; then
       echo "  ${_pc_bold}$(_t filter_no_match "$filter")${_pc_reset}"
@@ -1558,15 +1605,31 @@ _proj_interactive() {
     return
   fi
 
-  # 构建 fzf 输入 — 每个项目一行: name\tvisible_line
-  local fzf_input="" st="" updated="" icon="" st_label="" color="" line="" pad=0
+  # Declare every loop-scoped local ONCE here before entering the main
+  # loop — re-declaring inside for/while bodies echoes the prior binding
+  # (see HANDOFF gotcha #10, bit us twice already in this session).
+  local -a names=()
+  local sorted fzf_input st updated icon st_label color line pad
+  local name ptype phost ppath
+  local action_file result action target border_label header_line
   local R=$'\033[0m' B=$'\033[1m' D=$'\033[2m'
+
+  # Main loop. Every iteration re-sorts + re-renders, so Ctrl-O can
+  # swap sort modes without growing the call stack. Normal actions
+  # (go/cc/scan/close/batch-*) fall through the case and `break` out.
+  while true; do
+  sorted="$(print -rl -- "${filtered_names[@]}" | _proj_sort_names "$sort_mode")"
+  names=("${(@f)sorted}")
+  names=("${(@)names:#}")
+
+  # 构建 fzf 输入 — 每个项目一行: name\tvisible_line
+  fzf_input=""
 
   for name in "${names[@]}"; do
     st=$(_proj_get "$name" "status")
     updated=$(_proj_get "$name" "updated")
-    local ptype=$(_proj_get "$name" "type")
-    local phost=$(_proj_get "$name" "host")
+    ptype=$(_proj_get "$name" "type")
+    phost=$(_proj_get "$name" "host")
 
     case "$st" in
       active)   icon="●"; st_label="active";  color=$'\033[32m' ;;
@@ -1590,7 +1653,7 @@ _proj_interactive() {
 
     # Error states
     if [[ "$ptype" != "remote" ]]; then
-      local ppath=$(_proj_get "$name" "path")
+      ppath=$(_proj_get "$name" "path")
       if [[ -n "$ppath" && ! -d "$ppath" ]]; then
         line+="  $'\033[33m'! missing${R}"
       elif [[ -z "$ppath" ]]; then
@@ -1601,13 +1664,13 @@ _proj_interactive() {
     fzf_input+="${line}"$'\n'
   done
 
-  local action_file=$(mktemp /tmp/proj_action.XXXXXX)
+  action_file=$(mktemp /tmp/proj_action.XXXXXX)
 
   # Border label: include the active filter so users know what they're
   # looking at. Sort mode goes in the header line so it updates on Ctrl-O.
-  local border_label="${_i[panel_title]}"
+  border_label="${_i[panel_title]}"
   [[ -n "$filter" ]] && border_label=" 📋 proj ${filter} "
-  local header_line="${_i[panel_header]}  ${_pc_dim}[sort: ${sort_mode}]${_pc_reset}"
+  header_line="${_i[panel_header]}  ${_pc_dim}[sort: ${sort_mode}]${_pc_reset}"
 
   echo -n "$fzf_input" | fzf \
     --ansi \
@@ -1639,23 +1702,23 @@ _proj_interactive() {
     --padding=0,1 \
     > "$action_file"
 
-  local result=$(cat "$action_file")
+  result=$(cat "$action_file")
   rm -f "$action_file"
 
-  [[ -z "$result" ]] && return
+  [[ -z "$result" ]] && break
 
-  local action="${result%%:*}"
-  local target="${result#*:}"
+  action="${result%%:*}"
+  target="${result#*:}"
 
   case "$action" in
     go)
-      local target_type=$(_proj_get "$target" "type")
+      local target_type; target_type=$(_proj_get "$target" "type")
       if [[ "$target_type" == "remote" ]]; then
-        local rhost=$(_proj_get "$target" "host")
-        local rpath=$(_proj_get "$target" "remote_path")
+        local rhost; rhost=$(_proj_get "$target" "host")
+        local rpath; rpath=$(_proj_get "$target" "remote_path")
         _proj_ssh_jump "$rhost" "$rpath"
       else
-        local projpath=$(_proj_get "$target" "path")
+        local projpath; projpath=$(_proj_get "$target" "path")
         if [[ -n "$projpath" && -d "$projpath" ]]; then
           cd "$projpath"
           echo "${_pc_cyan}→ $projpath${_pc_reset}"
@@ -1667,16 +1730,20 @@ _proj_interactive() {
           echo "${_pc_dim}Use: proj edit $target path /new/path${_pc_reset}"
         fi
       fi
+      break
       ;;
     cc)
       _proj_resume_claude "$target"
+      break
       ;;
     scan)
       echo "${_pc_cyan}$(_t rescanning "$target")${_pc_reset}"
       _proj_scan_with_claude "$target"
+      break
       ;;
     close)
-      local choice=$(
+      local choice
+      choice=$(
         printf "%s\n%s\n" "${_i[close_done]}" "${_i[close_remove]}" \
         | fzf --ansi --no-scrollbar \
               --border=rounded \
@@ -1685,9 +1752,9 @@ _proj_interactive() {
               --padding=1,2 \
               --pointer='▶'
       )
+      local _old_st
       case "$choice" in
         *"${_i[close_done]}"*)
-          local _old_st
           _old_st=$(_proj_get "$target" "status")
           [[ -z "$_old_st" ]] && _old_st="unknown"
           _proj_set "$target" "status" "done"
@@ -1700,13 +1767,16 @@ _proj_interactive() {
           echo "${_pc_yellow}$(_t proj_removed "$target")${_pc_reset}"
           ;;
       esac
+      break
       ;;
     batch-status)
       # $target is a space-separated list of names from fzf's {+1} marker.
+      # Because _proj_names filters to the basename regex, we can trust
+      # that word-splitting here produces exactly one token per project.
       local -a targets=(${=target})
       if (( ${#targets} == 0 )); then
         echo "${_pc_yellow}${_i[batch_empty]}${_pc_reset}"
-        return
+        break
       fi
       local new_st
       new_st=$(
@@ -1718,10 +1788,17 @@ _proj_interactive() {
               --padding=1,2 \
               --pointer='▶'
       )
-      [[ -z "$new_st" ]] && return
-      local t
+      [[ -z "$new_st" ]] && break
+      # All loop-scoped locals declared up front (HANDOFF gotcha #10).
+      local t _old
       for t in "${targets[@]}"; do
-        local _old
+        # Defense against a race where another shell removes the project
+        # between panel render and action dispatch: skip missing entries
+        # instead of resurrecting a zombie via _proj_set's mkdir -p.
+        if ! _proj_exists "$t"; then
+          echo "${_pc_yellow}$(_t batch_skip_gone "$t")${_pc_reset}"
+          continue
+        fi
         _old=$(_proj_get "$t" "status")
         [[ -z "$_old" ]] && _old="unknown"
         _proj_set "$t" "status" "$new_st"
@@ -1729,14 +1806,16 @@ _proj_interactive() {
         _proj_history_append "$t" "status" "${_old}→${new_st}"
         echo "${_pc_green}$(_t status_changed "$t" "$new_st")${_pc_reset}"
       done
+      break
       ;;
     batch-delete)
       local -a targets=(${=target})
       if (( ${#targets} == 0 )); then
         echo "${_pc_yellow}${_i[batch_empty]}${_pc_reset}"
-        return
+        break
       fi
-      local choice=$(
+      local choice
+      choice=$(
         printf "%s\n%s\n" "${_i[close_done]}" "${_i[close_remove]}" \
         | fzf --ansi --no-scrollbar \
               --border=rounded \
@@ -1745,11 +1824,14 @@ _proj_interactive() {
               --padding=1,2 \
               --pointer='▶'
       )
+      local t _old
       case "$choice" in
         *"${_i[close_done]}"*)
-          local t
           for t in "${targets[@]}"; do
-            local _old
+            if ! _proj_exists "$t"; then
+              echo "${_pc_yellow}$(_t batch_skip_gone "$t")${_pc_reset}"
+              continue
+            fi
             _old=$(_proj_get "$t" "status")
             [[ -z "$_old" ]] && _old="unknown"
             _proj_set "$t" "status" "done"
@@ -1759,20 +1841,48 @@ _proj_interactive() {
           done
           ;;
         *"${_i[close_remove]}"*)
-          local t
+          # Count-gated typed confirmation for destructive batch Remove.
+          # Up to 4 projects you can just Enter past; 5+ you have to type
+          # the count to prevent fat-finger mass wipes.
+          if (( ${#targets} >= 5 )); then
+            echo ""
+            echo "${_pc_yellow}$(_t batch_remove_confirm ${#targets})${_pc_reset}"
+            echo "${_pc_dim}  ${targets[*]}${_pc_reset}"
+            printf "${_pc_bold}$(_t batch_remove_prompt ${#targets})${_pc_reset} "
+            local typed
+            read -r typed
+            if [[ "$typed" != "${#targets}" ]]; then
+              echo "${_pc_dim}$(_t batch_remove_aborted)${_pc_reset}"
+              break
+            fi
+          fi
           for t in "${targets[@]}"; do
+            # Warn before orphaning a remote checkout — only the local
+            # metadata is removed here, the actual remote dir stays put.
+            if [[ "$(_proj_get "$t" type)" == "remote" ]]; then
+              local _rhost _rp
+              _rhost=$(_proj_get "$t" host)
+              _rp=$(_proj_get "$t" remote_path)
+              echo "${_pc_yellow}$(_t batch_remote_warn "$t" "$_rhost:$_rp")${_pc_reset}"
+            fi
             rm -rf "$PROJ_DATA/$t"
             echo "${_pc_yellow}$(_t proj_removed "$t")${_pc_reset}"
           done
           ;;
       esac
+      break
       ;;
     sort-next)
-      # Cycle the session-level sort override and re-enter the panel.
-      export _PROJ_SORT_OVERRIDE="$(_proj_sort_next "$sort_mode")"
-      _proj_interactive "$filter"
+      # Cycle sort mode in place and re-render without growing the stack
+      # or touching any exported env var (no leak into child procs).
+      sort_mode="$(_proj_sort_next "$sort_mode")"
+      continue
+      ;;
+    *)
+      break
       ;;
   esac
+  done
 }
 
 # ── 主入口 ──
@@ -1854,7 +1964,14 @@ proj() {
       echo "    Ctrl-E    ${_i[help_key_ce]}"
       echo "    Ctrl-R    ${_i[help_key_cr]}"
       echo "    Ctrl-X    ${_i[help_key_cx]}"
+      echo "    Tab       ${_i[help_key_tab]}"
+      echo "    Ctrl-S    ${_i[help_key_cs]}"
+      echo "    Ctrl-D    ${_i[help_key_cd]}"
+      echo "    Ctrl-O    ${_i[help_key_co]}"
       echo "    Esc       ${_i[help_key_esc]}"
+      echo ""
+      echo "  ${_pc_dim}${_i[help_filters_title]}${_pc_reset}"
+      printf "${_pc_dim}%b${_pc_reset}\n" "${_i[help_filters_body]}"
       echo ""
       echo "  ${_pc_dim}${_i[help_global]}${_pc_reset}"
       echo ""
