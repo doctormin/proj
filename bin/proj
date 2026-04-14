@@ -1,0 +1,340 @@
+#!/usr/bin/env bash
+# proj — Meta Session bash shim (Phase 2d Unit D1)
+#
+# This file is BASH on purpose. The proj plugin is zsh-only; this shim is
+# the second deliberate exception to that rule (the first is install.sh).
+# Claude Code's Bash tool cannot invoke zsh functions, so when the user
+# runs `proj meta`, we prepend ~/.proj/bin to PATH inside the meta shell
+# only, and this shim gives Claude a restricted, confirmation-gated way
+# to read and mutate project state.
+#
+# Security model:
+#   - Hardcoded subcommand whitelist (list/get/history read; status/edit/
+#     tag/untag write; everything else refused).
+#   - Reads are implemented directly in bash (no zsh startup cost, no
+#     delegation for read paths).
+#   - Writes: validate every argument (name regex, field allowlist,
+#     status enum, tag regex), print an "About to:" summary, prompt on
+#     /dev/tty with `read -r` (default N), then exec a freshly-sourced
+#     zsh with explicitly-extracted positional arguments. No eval, no
+#     $@ passthrough, no glob.
+#   - The `path` / `path.<machine-id>` fields are NOT in the field
+#     allowlist — Meta Session must not see or rewrite per-machine paths.
+#
+# Test hook: set PROJ_SHIM_CONFIRM=y (or n) to bypass the /dev/tty read.
+# This is only honored when the env var is non-empty; in normal use the
+# read prompt is always shown to the user.
+#
+# Target: bash 3.2+ (macOS default). No associative arrays, no mapfile,
+# no bash-4-only regex features.
+
+set -euo pipefail
+
+PROJ_HOME="${PROJ_DIR:-$HOME/.proj}"
+PROJ_DATA="$PROJ_HOME/data"
+
+ALLOWED_READ="list, get, history"
+ALLOWED_WRITE="status, edit, tag, untag"
+
+die() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat >&2 <<EOF
+proj (Meta Session bash shim)
+
+Reads (no prompt):
+  proj list
+  proj get <name> <field>
+  proj history <name> [--all]
+
+Writes (interactive confirmation required):
+  proj status <name> <active|paused|blocked|done>
+  proj edit   <name> <field> <value>
+  proj tag    <name> <tag> [tag...]
+  proj untag  <name> <tag> [tag...]
+
+Restricted in Meta Session: rm, sync, add, meta, cc, code, import, export,
+new, doctor, stale, tags. Use a regular zsh shell for those.
+EOF
+}
+
+# ── Validation ────────────────────────────────────────────────────────────
+
+valid_name() {
+  # Mirror _proj_names in proj.zsh: must start alnum, then alnum/./_/-.
+  # Rejects leading -, path traversal (..), whitespace, shell metacharacters.
+  case "$1" in
+    '' ) return 1 ;;
+  esac
+  if printf '%s' "$1" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'; then
+    return 0
+  fi
+  return 1
+}
+
+# Explicit field allowlist for get/edit. Deliberately excludes `path` and
+# `path.<machine-id>` — those are per-machine internals that Meta Session
+# has no business exposing or mutating.
+valid_field() {
+  case "$1" in
+    desc|progress|todo|status|type|host|remote_path|updated|tags)
+      return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+valid_status() {
+  case "$1" in
+    active|paused|blocked|done) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+valid_tag() {
+  case "$1" in
+    '') return 1 ;;
+  esac
+  if printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]*$'; then
+    return 0
+  fi
+  return 1
+}
+
+proj_exists() {
+  [ -d "$PROJ_DATA/$1" ]
+}
+
+# ── Read operations (pure bash) ───────────────────────────────────────────
+
+cmd_list() {
+  if [ ! -d "$PROJ_DATA" ]; then
+    return 0
+  fi
+  # Same filter as _proj_names in proj.zsh. Using a for-loop (not ls|grep)
+  # keeps shellcheck happy and rejects non-alphanumeric entries explicitly.
+  local entry base
+  for entry in "$PROJ_DATA"/*; do
+    # Unmatched glob yields the literal pattern — skip if nothing exists.
+    [ -e "$entry" ] || continue
+    [ -d "$entry" ] || continue
+    base="${entry##*/}"
+    case "$base" in
+      [a-zA-Z0-9]*) ;;
+      *) continue ;;
+    esac
+    if printf '%s' "$base" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'; then
+      printf '%s\n' "$base"
+    fi
+  done
+}
+
+cmd_get() {
+  local name="${1:-}"
+  local field="${2:-}"
+  if [ -z "$name" ] || [ -z "$field" ]; then
+    die "usage: proj get <name> <field>"
+  fi
+  valid_name "$name" || die "invalid project name: $name"
+  valid_field "$field" || die "field not allowed: $field (allowed: desc, progress, todo, status, type, host, remote_path, updated, tags)"
+  proj_exists "$name" || die "no such project: $name"
+  local f="$PROJ_DATA/$name/$field"
+  if [ -f "$f" ]; then
+    cat "$f"
+  fi
+}
+
+cmd_history() {
+  local name="${1:-}"
+  local mode="${2:-}"
+  if [ -z "$name" ]; then
+    die "usage: proj history <name> [--all]"
+  fi
+  valid_name "$name" || die "invalid project name: $name"
+  proj_exists "$name" || die "no such project: $name"
+  if [ -n "$mode" ] && [ "$mode" != "--all" ]; then
+    die "usage: proj history <name> [--all]"
+  fi
+  local log="$PROJ_DATA/$name/history.log"
+  if [ ! -f "$log" ] || [ ! -s "$log" ]; then
+    echo "(no history)"
+    return 0
+  fi
+  if [ "$mode" = "--all" ]; then
+    cat "$log"
+  else
+    # Most-recent-first, cap at 30. No epoch parsing (that's proj.zsh's
+    # job); shim just shows raw tail in file order reversed.
+    tail -n 30 "$log"
+  fi
+}
+
+# ── Confirmation prompt ───────────────────────────────────────────────────
+
+confirm() {
+  # $1 = "About to:" summary line
+  printf 'About to: %s\n' "$1" >&2
+  local ans=""
+  if [ -n "${PROJ_SHIM_CONFIRM:-}" ]; then
+    # Test hook — never used in real Meta Session where /dev/tty exists.
+    ans="$PROJ_SHIM_CONFIRM"
+  else
+    printf 'Confirm? [y/N] ' >&2
+    if ! read -r ans </dev/tty; then
+      ans=""
+    fi
+  fi
+  case "$ans" in
+    y|Y|yes|YES) return 0 ;;
+    *) printf 'Cancelled.\n' >&2; return 1 ;;
+  esac
+}
+
+# ── Write operations (validate → confirm → exec zsh) ─────────────────────
+
+delegate_zsh() {
+  # Invoke: zsh -c 'source <proj.zsh> && proj "$@"' proj_shim <args...>
+  # Positional args are passed out-of-band via "$@" — NOT interpolated into
+  # the script body. This is the whole point of the validation gates above.
+  #
+  # Source path resolution: normal install puts proj.zsh at
+  # $PROJ_HOME/proj.zsh. Tests and dev can override via PROJ_SHIM_ZSH
+  # (only this specific env var — we intentionally don't accept a generic
+  # "run this script" hook).
+  local src="${PROJ_SHIM_ZSH:-$PROJ_HOME/proj.zsh}"
+  if [ ! -f "$src" ]; then
+    die "proj.zsh not found at $src"
+  fi
+  PROJ_SHIM_ZSH_RESOLVED="$src" zsh -c 'source "$PROJ_SHIM_ZSH_RESOLVED" && proj "$@"' proj_shim "$@"
+}
+
+cmd_status() {
+  local name="${1:-}"
+  local new_st="${2:-}"
+  if [ -z "$name" ] || [ -z "$new_st" ]; then
+    die "usage: proj status <name> <active|paused|blocked|done>"
+  fi
+  valid_name "$name" || die "invalid project name: $name"
+  valid_status "$new_st" || die "invalid status: $new_st (must be one of: active, paused, blocked, done)"
+  proj_exists "$name" || die "no such project: $name"
+  local current=""
+  if [ -f "$PROJ_DATA/$name/status" ]; then
+    current=$(cat "$PROJ_DATA/$name/status")
+  fi
+  confirm "proj status $name $new_st (current: ${current:-unknown})" || exit 1
+  delegate_zsh status "$name" "$new_st"
+}
+
+cmd_edit() {
+  local name="${1:-}"
+  local field="${2:-}"
+  if [ -z "$name" ] || [ -z "$field" ] || [ "$#" -lt 3 ]; then
+    die "usage: proj edit <name> <field> <value>"
+  fi
+  valid_name "$name" || die "invalid project name: $name"
+  valid_field "$field" || die "field not allowed: $field (allowed: desc, progress, todo, status, type, host, remote_path, updated, tags)"
+  # Don't let Meta Session rewrite status via `edit` — that's what `status` is
+  # for, and it has its own enum gate.
+  case "$field" in
+    status) die "use 'proj status <name> <new-status>' to change status" ;;
+    tags)   die "use 'proj tag' / 'proj untag' to manage tags" ;;
+  esac
+  proj_exists "$name" || die "no such project: $name"
+  shift 2
+  local value="$*"
+  # Show a truncated preview so a 10 KB desc doesn't drown the prompt.
+  local preview="$value"
+  if [ ${#preview} -gt 80 ]; then
+    preview="${preview:0:77}..."
+  fi
+  confirm "proj edit $name $field \"$preview\"" || exit 1
+  delegate_zsh edit "$name" "$field" "$value"
+}
+
+cmd_tag_common() {
+  local verb="$1"  # "tag" or "untag"
+  shift
+  local name="${1:-}"
+  if [ -z "$name" ] || [ "$#" -lt 2 ]; then
+    die "usage: proj $verb <name> <tag> [tag...]"
+  fi
+  valid_name "$name" || die "invalid project name: $name"
+  proj_exists "$name" || die "no such project: $name"
+  shift
+  # Validate + dedupe tags into a plain positional list.
+  local -a tags
+  tags=()
+  local t seen found
+  for t in "$@"; do
+    valid_tag "$t" || die "invalid tag: $t (must match [a-z0-9][a-z0-9-]*)"
+    found=0
+    for seen in "${tags[@]:-}"; do
+      if [ "$seen" = "$t" ]; then
+        found=1
+        break
+      fi
+    done
+    if [ "$found" -eq 0 ]; then
+      tags[${#tags[@]}]="$t"
+    fi
+  done
+  confirm "proj $verb $name ${tags[*]}" || exit 1
+  delegate_zsh "$verb" "$name" "${tags[@]}"
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────
+
+main() {
+  if [ "$#" -eq 0 ]; then
+    usage
+    exit 1
+  fi
+  local cmd="$1"
+  shift
+  case "$cmd" in
+    list|ls)
+      if [ "$#" -ne 0 ]; then
+        die "usage: proj list (no arguments)"
+      fi
+      cmd_list
+      ;;
+    get)
+      cmd_get "$@"
+      ;;
+    history)
+      cmd_history "$@"
+      ;;
+    status)
+      cmd_status "$@"
+      ;;
+    edit)
+      cmd_edit "$@"
+      ;;
+    tag)
+      cmd_tag_common tag "$@"
+      ;;
+    untag)
+      cmd_tag_common untag "$@"
+      ;;
+    rm|sync|add|meta|cc|code|import|export|new|doctor|stale|tags|-h|--help|help)
+      if [ "$cmd" = "-h" ] || [ "$cmd" = "--help" ] || [ "$cmd" = "help" ]; then
+        usage
+        exit 0
+      fi
+      printf 'restricted command: %s\n' "$cmd" >&2
+      printf 'Allowed reads:  %s\n' "$ALLOWED_READ" >&2
+      printf 'Allowed writes: %s\n' "$ALLOWED_WRITE" >&2
+      exit 2
+      ;;
+    *)
+      printf 'restricted command: %s\n' "$cmd" >&2
+      printf 'Allowed reads:  %s\n' "$ALLOWED_READ" >&2
+      printf 'Allowed writes: %s\n' "$ALLOWED_WRITE" >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

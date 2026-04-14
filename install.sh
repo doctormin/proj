@@ -89,9 +89,16 @@ download_release() {
 # ── Install files ──
 install_files() {
   mkdir -p "$PROJ_DIR/data"
+  mkdir -p "$PROJ_DIR/bin"
   cp "$REPO_DIR/proj.zsh" "$PROJ_DIR/proj.zsh"
   cp "$REPO_DIR/preview.sh" "$PROJ_DIR/preview.sh"
+  # bin/proj: bash shim used only inside `proj meta` (Phase 2d D1). It gives
+  # Claude Code's Bash tool a restricted, confirmation-gated way to read and
+  # mutate project state. Second deliberate exception to the zsh-only rule
+  # (the first is this installer).
+  cp "$REPO_DIR/bin/proj" "$PROJ_DIR/bin/proj"
   chmod +x "$PROJ_DIR/preview.sh"
+  chmod +x "$PROJ_DIR/bin/proj"
   echo "$PROJ_VERSION" > "$PROJ_DIR/version"
   info "Files installed to $PROJ_DIR"
 }
