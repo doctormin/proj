@@ -1592,6 +1592,11 @@ METAEOF
   # processes (claude) still inherit the modified value. (Phase 2d D1.)
   local PATH="$PROJ_DIR/bin:$PATH"
   cd "$meta_dir"
+  # Scrub any PROJ_SHIM_* env vars from the parent shell so stale or
+  # hostile values can't leak into the claude child (and from there into
+  # Bash-tool invocations of the shim). Test-mode and confirm hooks must
+  # be set explicitly per-invocation in tests, never inherited.
+  unset PROJ_SHIM_CONFIRM PROJ_SHIM_ZSH PROJ_SHIM_ZSH_RESOLVED PROJ_SHIM_TEST_MODE
   # Try to continue existing meta session, or start new
   claude -c 2>/dev/null || claude
 }

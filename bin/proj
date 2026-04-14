@@ -21,9 +21,12 @@
 #   - The `path` / `path.<machine-id>` fields are NOT in the field
 #     allowlist — Meta Session must not see or rewrite per-machine paths.
 #
-# Test hook: set PROJ_SHIM_CONFIRM=y (or n) to bypass the /dev/tty read.
-# This is only honored when the env var is non-empty; in normal use the
-# read prompt is always shown to the user.
+# Test hook: set PROJ_SHIM_TEST_MODE=1 AND PROJ_SHIM_CONFIRM=y (or n) to
+# bypass the /dev/tty read. The double-gate is deliberate — in real Meta
+# Session, even if a prompt-injected project field convinces Claude to
+# prefix `PROJ_SHIM_CONFIRM=y` on a command, the test-mode sentinel will
+# not be set, so the /dev/tty prompt still fires. PROJ_SHIM_ZSH (override
+# for the proj.zsh source path) is similarly gated on PROJ_SHIM_TEST_MODE.
 #
 # Target: bash 3.2+ (macOS default). No associative arrays, no mapfile,
 # no bash-4-only regex features.
@@ -142,7 +145,15 @@ cmd_get() {
   proj_exists "$name" || die "no such project: $name"
   local f="$PROJ_DATA/$name/$field"
   if [ -f "$f" ]; then
-    cat "$f"
+    if [ "$field" = "tags" ]; then
+      # tags is stored one-per-line; flatten to a single space-joined line
+      # so consumers (Claude) get a single-line value like every other
+      # field. Empty file → empty output.
+      tr '\n' ' ' < "$f" | sed 's/ *$//'
+      printf '\n'
+    else
+      cat "$f"
+    fi
   fi
 }
 
@@ -162,26 +173,37 @@ cmd_history() {
     echo "(no history)"
     return 0
   fi
+  # Delegate to zsh so the user sees the same epoch-sorted, relative-
+  # timestamp formatted output as `proj history` in a normal shell.
+  # Multi-machine sync means file order != chronological order, and a
+  # raw `tail` would mislead Claude when reasoning about activity. No
+  # confirm gate — history is read-only.
   if [ "$mode" = "--all" ]; then
-    cat "$log"
+    delegate_zsh history "$name" --all
   else
-    # Most-recent-first, cap at 30. No epoch parsing (that's proj.zsh's
-    # job); shim just shows raw tail in file order reversed.
-    tail -n 30 "$log"
+    delegate_zsh history "$name"
   fi
 }
 
 # ── Confirmation prompt ───────────────────────────────────────────────────
 
 confirm() {
-  # $1 = "About to:" summary line
-  printf 'About to: %s\n' "$1" >&2
+  # $1 = "About to:" summary line.
+  # Print the summary AND prompt directly to /dev/tty so a redirect like
+  # `2>/dev/null` from a prompt-injected payload cannot stealth the user-
+  # visible confirmation. Fall back to stderr only when /dev/tty is
+  # unavailable (which in real Meta Session would already mean the read
+  # below has nothing to read from).
+  printf 'About to: %s\n' "$1" >/dev/tty 2>/dev/null || printf 'About to: %s\n' "$1" >&2
   local ans=""
-  if [ -n "${PROJ_SHIM_CONFIRM:-}" ]; then
-    # Test hook — never used in real Meta Session where /dev/tty exists.
+  # Double-gated test hook: PROJ_SHIM_CONFIRM is only honored when
+  # PROJ_SHIM_TEST_MODE=1 is also set. The single env var alone is
+  # ignored, so a prompt-injected `PROJ_SHIM_CONFIRM=y` prefix on a
+  # Bash-tool command in Meta Session cannot bypass the /dev/tty prompt.
+  if [ -n "${PROJ_SHIM_CONFIRM:-}" ] && [ "${PROJ_SHIM_TEST_MODE:-}" = "1" ]; then
     ans="$PROJ_SHIM_CONFIRM"
   else
-    printf 'Confirm? [y/N] ' >&2
+    printf 'Confirm? [y/N] ' >/dev/tty 2>/dev/null || printf 'Confirm? [y/N] ' >&2
     if ! read -r ans </dev/tty; then
       ans=""
     fi
@@ -200,10 +222,17 @@ delegate_zsh() {
   # the script body. This is the whole point of the validation gates above.
   #
   # Source path resolution: normal install puts proj.zsh at
-  # $PROJ_HOME/proj.zsh. Tests and dev can override via PROJ_SHIM_ZSH
-  # (only this specific env var — we intentionally don't accept a generic
-  # "run this script" hook).
-  local src="${PROJ_SHIM_ZSH:-$PROJ_HOME/proj.zsh}"
+  # $PROJ_HOME/proj.zsh. PROJ_SHIM_ZSH is a TEST-ONLY override and is
+  # only honored when PROJ_SHIM_TEST_MODE=1. In production we always
+  # resolve to $PROJ_HOME/proj.zsh — otherwise a prompt-injected
+  # `PROJ_SHIM_ZSH=/tmp/evil.zsh` could redirect delegation to attacker-
+  # controlled code.
+  local src
+  if [ -n "${PROJ_SHIM_ZSH:-}" ] && [ "${PROJ_SHIM_TEST_MODE:-}" = "1" ]; then
+    src="$PROJ_SHIM_ZSH"
+  else
+    src="$PROJ_HOME/proj.zsh"
+  fi
   if [ ! -f "$src" ]; then
     die "proj.zsh not found at $src"
   fi
@@ -238,8 +267,9 @@ cmd_edit() {
   # Don't let Meta Session rewrite status via `edit` — that's what `status` is
   # for, and it has its own enum gate.
   case "$field" in
-    status) die "use 'proj status <name> <new-status>' to change status" ;;
-    tags)   die "use 'proj tag' / 'proj untag' to manage tags" ;;
+    status)  die "use 'proj status <name> <new-status>' to change status" ;;
+    tags)    die "use 'proj tag' / 'proj untag' to manage tags" ;;
+    updated) die "the updated timestamp is managed automatically, not directly editable" ;;
   esac
   proj_exists "$name" || die "no such project: $name"
   shift 2
