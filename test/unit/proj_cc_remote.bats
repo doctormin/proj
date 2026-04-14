@@ -77,8 +77,8 @@ _add_remote_project() {
   run proj cc srv-a
   assert_success
   local logged; logged="$(cat "$SSH_CALLS_LOG")"
-  # printf %q would produce /srv/my\ project
-  [[ "$logged" == *"my\\ project"* || "$logged" == *"'my project'"* ]]
+  # Path is wrapped in single quotes via zsh (qq).
+  [[ "$logged" == *"'/srv/my project'"* ]]
 }
 
 @test "proj cc <remote>: bumps updated timestamp" {
@@ -143,5 +143,105 @@ _add_remote_project() {
   run proj cc localp
   # Local path normally exits successfully via mock claude. We only
   # care that the ssh mock was NOT hit.
+  [ ! -s "$SSH_CALLS_LOG" ]
+}
+
+# ── regression coverage from round 1 review ─────────────────────────────
+
+@test "proj cc <remote>: ssh invoked with '--' separator before host" {
+  setup_cc
+  _add_remote_project srv-a user@ai4s /srv/proj
+  run proj cc srv-a
+  assert_success
+  # '--' must appear before the host to defuse -oProxyCommand-style
+  # injection via a hand-edited or imported host field.
+  [[ "$(cat "$SSH_CALLS_LOG")" == *"-t -- user@ai4s"* ]]
+}
+
+@test "proj cc <remote>: remote_path with \$ is not expanded on remote" {
+  setup_cc
+  _add_remote_project srv-a user@ai4s '/srv/a$b/project'
+  run proj cc srv-a
+  assert_success
+  local logged; logged="$(cat "$SSH_CALLS_LOG")"
+  # The literal $b must appear inside outer single quotes so the remote
+  # sh cannot re-expand it.
+  [[ "$logged" == *"'/srv/a\$b/project'"* ]]
+  # And must NOT appear unquoted in a way that would let remote sh see $b.
+  [[ "$logged" != *"cd /srv/a "* ]]
+}
+
+@test "proj cc <remote>: remote_path with backtick is not command-substituted" {
+  setup_cc
+  _add_remote_project srv-a user@ai4s '/srv/bt`evil`'
+  run proj cc srv-a
+  assert_success
+  local logged; logged="$(cat "$SSH_CALLS_LOG")"
+  # Backticks are present, but inside the outer single quotes they are
+  # literal — they cannot trigger remote command substitution.
+  [[ "$logged" == *'`evil`'* ]]
+  [[ "$logged" == *"'/srv/bt"* ]]
+}
+
+@test "proj cc <remote>: remote_path with single quote is escaped via '\\\\''" {
+  setup_cc
+  _add_remote_project srv-a user@ai4s "/srv/it's"
+  run proj cc srv-a
+  assert_success
+  # zsh (qq) uses the classic '\'' escape inside a single-quoted block.
+  [[ "$(cat "$SSH_CALLS_LOG")" == *"'\\'\\''"* ]]
+}
+
+@test "proj cc <remote>: PROJ_REMOTE_SHELL with quoting metacharacters is refused" {
+  setup_cc
+  _add_remote_project srv-a
+  PROJ_REMOTE_SHELL='bash -lc "echo pwned;' run proj cc srv-a
+  assert_failure
+  assert_output --partial "unsafe characters"
+  [ ! -s "$SSH_CALLS_LOG" ]
+}
+
+@test "proj cc <remote>: missing-fields error message includes the project name" {
+  setup_cc
+  proj list >/dev/null
+  mkdir -p "$HOME/.proj/data/srv-broken"
+  echo "remote" > "$HOME/.proj/data/srv-broken/type"
+  echo "active" > "$HOME/.proj/data/srv-broken/status"
+  # no host, no remote_path
+  run proj cc srv-broken
+  assert_failure
+  # Name must appear literally (not be swallowed by a %s/arg-count mismatch).
+  assert_output --partial "'srv-broken'"
+  assert_output --partial "proj edit srv-broken"
+}
+
+@test "proj cc <remote>: type file with trailing CR still routes to remote" {
+  setup_cc
+  _add_remote_project srv-a user@ai4s /srv/proj
+  # Simulate a cross-machine-synced file with a Windows-style CRLF.
+  printf 'remote\r\n' > "$HOME/.proj/data/srv-a/type"
+  run proj cc srv-a
+  assert_success
+  [ -s "$SSH_CALLS_LOG" ]
+}
+
+@test "proj cc (no arg): does not silently auto-select a remote project" {
+  setup_cc
+  _add_remote_project srv-remote user@ai4s /srv/proj
+  cd "$HOME"   # cwd does not match any project
+  run proj cc
+  # Must NOT have invoked ssh against the remote just because its empty
+  # path field produced a wildcard prefix match.
+  [ ! -s "$SSH_CALLS_LOG" ]
+}
+
+@test "proj cc (no arg): local cwd match is preferred over any remote" {
+  setup_cc
+  _add_remote_project srv-remote user@ai4s /srv/proj
+  mkdir -p "$HOME/workspace/localp"
+  proj add localp "$HOME/workspace/localp" >/dev/null
+  cd "$HOME/workspace/localp"
+  run proj cc
+  # Auto-detect picked the local project, no ssh.
   [ ! -s "$SSH_CALLS_LOG" ]
 }

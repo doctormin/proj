@@ -143,6 +143,7 @@ _proj_i18n_en() {
     remote_missing_fields "Remote project '%s' has no host or remote_path. Run: proj edit %s host <user@host>"
     remote_no_ssh      "ssh is not installed. Install OpenSSH or set your system up for remote access."
     remote_cc_connecting "→ Connecting to %s: %s"
+    remote_bad_shell   "Refusing \$PROJ_REMOTE_SHELL with unsafe characters: '%s'"
 
     # ── interactive panel ──
     panel_title        " 📋 Projects "
@@ -301,6 +302,7 @@ _proj_i18n_zh() {
     remote_missing_fields "远端项目 '%s' 缺少 host 或 remote_path。运行: proj edit %s host <user@host>"
     remote_no_ssh      "未安装 ssh。请安装 OpenSSH 或检查远端连接配置。"
     remote_cc_connecting "→ 连接 %s: %s"
+    remote_bad_shell   "\$PROJ_REMOTE_SHELL 含有不安全字符，已拒绝: '%s'"
 
     # ── 交互面板 ──
     panel_title        " 📋 项目面板 "
@@ -1225,7 +1227,7 @@ _proj_ssh_remote_claude() {
   local rpath; rpath=$(_proj_get "$name" "remote_path")
 
   if [[ -z "$host" || -z "$rpath" ]]; then
-    echo "${_pc_red}$(_t remote_missing_fields "$name")${_pc_reset}"
+    echo "${_pc_red}$(_t remote_missing_fields "$name" "$name")${_pc_reset}"
     return 1
   fi
 
@@ -1234,16 +1236,36 @@ _proj_ssh_remote_claude() {
     return 1
   fi
 
+  # Validate $PROJ_REMOTE_SHELL against a conservative allowlist. The value
+  # is interpolated unquoted into the ssh argv, so arbitrary quoting would
+  # produce ambiguous parses on the remote side. Letters, digits, space,
+  # tab, dot, dash, underscore, and forward slash are enough to express
+  # `bash -lc`, `zsh -ic`, `/usr/bin/env bash -lc`, etc.
   local remote_shell="${PROJ_REMOTE_SHELL:-bash -lc}"
-  local escaped_path; escaped_path=$(printf %q "$rpath")
+  if [[ ! "$remote_shell" =~ ^[[:alnum:][:space:]._/-]+$ ]]; then
+    echo "${_pc_red}$(_t remote_bad_shell "$remote_shell")${_pc_reset}"
+    return 1
+  fi
 
   echo "${_pc_cyan}$(_t remote_cc_connecting "$host" "$rpath")${_pc_reset}"
   _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
 
-  # Full command: ssh -t <host> '<shell> "cd <path> && exec claude -c"'
-  # The outer shell evaluation on the remote runs whichever shell the user
-  # configured, which loads its login rc and ensures claude is on PATH.
-  ssh -t "$host" "$remote_shell \"cd $escaped_path && exec claude -c\""
+  # ── Quoting layers ──
+  # ssh concatenates its trailing argv with single spaces and hands the
+  # result to the remote login shell as a single command string. That
+  # string is re-parsed once by sh and (for our wrapper) a second time by
+  # `bash -lc`. zsh's ${(qq)} flag wraps a value in POSIX-safe single
+  # quotes (with the classic `'\''` escape for internal quotes), which
+  # both re-parse layers handle correctly. We apply it twice: once around
+  # the path inside the bash command, and once around the whole bash
+  # command for the outer wrapper shell.
+  local bash_cmd="cd -- ${(qq)rpath} && exec claude -c"
+  local full_cmd="${remote_shell} ${(qq)bash_cmd}"
+
+  # `--` before $host prevents a host value that accidentally begins with
+  # `-` (e.g. from a hand-edited host file or a malicious import) from
+  # being interpreted by ssh as an option like -oProxyCommand=….
+  ssh -t -- "$host" "$full_cmd"
 }
 
 # ── _proj_resume_claude (cd + resume session) ──
@@ -1253,7 +1275,11 @@ _proj_resume_claude() {
 
   # Remote projects take a separate path — there is no local checkout to
   # cd into and no local ~/.claude/projects/<encoded-cwd>/ session dir.
+  # Trim trailing whitespace from the type field so a stray CR or newline
+  # from a hand-edited / cross-machine-synced file doesn't silently fall
+  # through to the local branch and exit 1 with no error.
   local ptype; ptype=$(_proj_get "$name" "type")
+  ptype="${ptype%%[[:space:]]*}"
   if [[ "$ptype" == "remote" ]]; then
     _proj_ssh_remote_claude "$name"
     return $?
@@ -2744,12 +2770,25 @@ _proj_cc() {
   local target="$1"
 
   if [[ -z "$target" ]]; then
-    local cwd=$(pwd)
-    for n in $(_proj_names); do
-      if [[ "$cwd" == "$(_proj_get "$n" "path")"* ]]; then
-        target="$n"; break
+    # Auto-detect from cwd. Use zsh (:A) to canonicalize through symlinks,
+    # newline-split _proj_names safely, skip projects with empty path
+    # (primarily remotes — their path field is empty on this machine, so
+    # a literal prefix match would otherwise always succeed and silently
+    # pick the first remote in iteration order), and prefer the longest
+    # matching project path for nested checkouts.
+    local cwd="${PWD:A}" n npath best_name="" best_len=0
+    for n in "${(@f)$(_proj_names)}"; do
+      [[ -z "$n" ]] && continue
+      npath=$(_proj_get "$n" "path")
+      [[ -z "$npath" ]] && continue
+      npath="${npath:A}"
+      if [[ "$cwd" == "$npath" || "$cwd" == "$npath"/* ]]; then
+        if (( ${#npath} > best_len )); then
+          best_name="$n"; best_len=${#npath}
+        fi
       fi
     done
+    target="$best_name"
   fi
 
   if [[ -z "$target" ]]; then
