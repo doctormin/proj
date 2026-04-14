@@ -31,8 +31,8 @@ _add_remote_project() {
   assert_success
   [ -s "$SSH_CALLS_LOG" ]
   local logged; logged="$(cat "$SSH_CALLS_LOG")"
-  [[ "$logged" == *"-t"* ]]
-  [[ "$logged" == *"user@ai4s"* ]]
+  [[ "$logged" == *"-t"* ]] || false
+  [[ "$logged" == *"user@ai4s"* ]] || false
 }
 
 @test "proj cc <remote>: cd's into remote_path and runs claude -c" {
@@ -41,8 +41,10 @@ _add_remote_project() {
   run proj cc srv-a
   assert_success
   local logged; logged="$(cat "$SSH_CALLS_LOG")"
-  [[ "$logged" == *"cd /srv/proj"* ]]
-  [[ "$logged" == *"claude -c"* ]]
+  # zsh (qq) wraps the path so it reaches the remote as `cd -- '/srv/proj'`.
+  [[ "$logged" == *"cd --"* ]] || false
+  [[ "$logged" == *"/srv/proj"* ]] || false
+  [[ "$logged" == *"claude -c"* ]] || false
 }
 
 @test "proj cc <remote>: default wrapper is bash -lc" {
@@ -50,7 +52,7 @@ _add_remote_project() {
   _add_remote_project srv-a
   run proj cc srv-a
   assert_success
-  [[ "$(cat "$SSH_CALLS_LOG")" == *"bash -lc"* ]]
+  [[ "$(cat "$SSH_CALLS_LOG")" == *"bash -lc"* ]] || false
 }
 
 @test "proj cc <remote>: PROJ_REMOTE_SHELL overrides the wrapper" {
@@ -59,8 +61,8 @@ _add_remote_project() {
   PROJ_REMOTE_SHELL="zsh -ic" run proj cc srv-a
   assert_success
   local logged; logged="$(cat "$SSH_CALLS_LOG")"
-  [[ "$logged" == *"zsh -ic"* ]]
-  [[ "$logged" != *"bash -lc"* ]]
+  [[ "$logged" == *"zsh -ic"* ]] || false
+  [[ "$logged" != *"bash -lc"* ]] || false
 }
 
 @test "proj cc <remote>: uses exec so claude takes the foreground" {
@@ -68,7 +70,7 @@ _add_remote_project() {
   _add_remote_project srv-a
   run proj cc srv-a
   assert_success
-  [[ "$(cat "$SSH_CALLS_LOG")" == *"exec claude -c"* ]]
+  [[ "$(cat "$SSH_CALLS_LOG")" == *"exec claude -c"* ]] || false
 }
 
 @test "proj cc <remote>: escapes remote_path containing spaces" {
@@ -78,7 +80,7 @@ _add_remote_project() {
   assert_success
   local logged; logged="$(cat "$SSH_CALLS_LOG")"
   # Path is wrapped in single quotes via zsh (qq).
-  [[ "$logged" == *"'/srv/my project'"* ]]
+  [[ "$logged" == *"'/srv/my project'"* ]] || false
 }
 
 @test "proj cc <remote>: bumps updated timestamp" {
@@ -155,7 +157,7 @@ _add_remote_project() {
   assert_success
   # '--' must appear before the host to defuse -oProxyCommand-style
   # injection via a hand-edited or imported host field.
-  [[ "$(cat "$SSH_CALLS_LOG")" == *"-t -- user@ai4s"* ]]
+  [[ "$(cat "$SSH_CALLS_LOG")" == *"-t -- user@ai4s"* ]] || false
 }
 
 @test "proj cc <remote>: remote_path with \$ is not expanded on remote" {
@@ -166,9 +168,9 @@ _add_remote_project() {
   local logged; logged="$(cat "$SSH_CALLS_LOG")"
   # The literal $b must appear inside outer single quotes so the remote
   # sh cannot re-expand it.
-  [[ "$logged" == *"'/srv/a\$b/project'"* ]]
+  [[ "$logged" == *"'/srv/a\$b/project'"* ]] || false
   # And must NOT appear unquoted in a way that would let remote sh see $b.
-  [[ "$logged" != *"cd /srv/a "* ]]
+  [[ "$logged" != *"cd /srv/a "* ]] || false
 }
 
 @test "proj cc <remote>: remote_path with backtick is not command-substituted" {
@@ -179,8 +181,8 @@ _add_remote_project() {
   local logged; logged="$(cat "$SSH_CALLS_LOG")"
   # Backticks are present, but inside the outer single quotes they are
   # literal — they cannot trigger remote command substitution.
-  [[ "$logged" == *'`evil`'* ]]
-  [[ "$logged" == *"'/srv/bt"* ]]
+  [[ "$logged" == *'`evil`'* ]] || false
+  [[ "$logged" == *"'/srv/bt"* ]] || false
 }
 
 @test "proj cc <remote>: remote_path with single quote is escaped via '\\\\''" {
@@ -189,7 +191,7 @@ _add_remote_project() {
   run proj cc srv-a
   assert_success
   # zsh (qq) uses the classic '\'' escape inside a single-quoted block.
-  [[ "$(cat "$SSH_CALLS_LOG")" == *"'\\'\\''"* ]]
+  [[ "$(cat "$SSH_CALLS_LOG")" == *"'\\'\\''"* ]] || false
 }
 
 @test "proj cc <remote>: PROJ_REMOTE_SHELL with quoting metacharacters is refused" {
