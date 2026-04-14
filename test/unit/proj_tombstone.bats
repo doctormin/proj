@@ -331,6 +331,111 @@ setup_git_identity() {
   export HOME="$home_a"
 }
 
+@test "sync mode-2 rescues pre-existing local tombstones from backup dir" {
+  # Scenario: machine B tombstoned a project BEFORE ever configuring
+  # sync-repo, then joins an existing sync. The * glob in the merge-back
+  # loop skips dotdirs, so without an explicit rescue the local
+  # .tombstones/ would be stranded in the backup and the delete intent
+  # silently lost. Machine A meanwhile still has the project alive.
+  setup_git_identity
+
+  # A: add foo, push
+  mkdir -p "$HOME/workspace/foo"
+  run proj add foo "$HOME/workspace/foo"
+  local url
+  url=$(make_bare_repo "$HOME/remote.git")
+  set_sync_repo "$url"
+  run proj_yes sync
+  assert_success
+
+  # B: fresh HOME, add foo, then tombstone it BEFORE configuring sync.
+  local home_a="$HOME"
+  export HOME="$(mktemp -d -t proj-test-B.XXXXXX)"
+  mkdir -p "$HOME/workspace/foo"
+  run proj add foo "$HOME/workspace/foo"
+  run proj rm foo
+  assert_success
+  assert [ -f "$HOME/.proj/data/.tombstones/foo" ]
+  # Nothing else under data (besides dotdirs); remove any stray files to
+  # make the backup glob loop fully exercise the dotdir-skip edge case.
+
+  # Now configure sync-repo and run mode-2 (clone + merge local).
+  set_sync_repo "$url"
+  run proj sync
+  assert_success
+
+  # The rescued tombstone must survive the clone-merge.
+  assert [ -f "$HOME/.proj/data/.tombstones/foo" ]
+  # And the purge should have removed the just-cloned foo dir.
+  assert [ ! -d "$HOME/.proj/data/foo" ]
+
+  # A: sync again — should see the deletion propagate back via the
+  # tombstone that B rescued and pushed.
+  export HOME="$home_a"
+  run proj sync
+  assert_success
+  assert [ ! -d "$HOME/.proj/data/foo" ]
+  assert [ -f "$HOME/.proj/data/.tombstones/foo" ]
+}
+
+@test "_proj_sync_ensure_gitattributes adds tombstone union-merge rule" {
+  mkdir -p "$HOME/.proj/data"
+  run bash -c "zsh -c 'source \"$PROJ_ROOT/proj.zsh\" && _proj_sync_ensure_gitattributes'"
+  assert_success
+  local gaf="$HOME/.proj/data/.gitattributes"
+  assert [ -f "$gaf" ]
+  run grep -qxF '*/history.log merge=union' "$gaf"
+  assert_success
+  run grep -qxF '.tombstones/* merge=union' "$gaf"
+  assert_success
+
+  # Idempotent: a second call must not duplicate either line.
+  run bash -c "zsh -c 'source \"$PROJ_ROOT/proj.zsh\" && _proj_sync_ensure_gitattributes'"
+  assert_success
+  run bash -c "grep -c '^\*/history.log merge=union$' '$gaf'"
+  assert_output "1"
+  run bash -c "grep -c '^\.tombstones/\* merge=union$' '$gaf'"
+  assert_output "1"
+}
+
+@test "_proj_sync_ensure_gitattributes migrates a legacy file with only history.log rule" {
+  mkdir -p "$HOME/.proj/data"
+  printf '%s\n' '*/history.log merge=union' > "$HOME/.proj/data/.gitattributes"
+  run bash -c "zsh -c 'source \"$PROJ_ROOT/proj.zsh\" && _proj_sync_ensure_gitattributes'"
+  assert_success
+  run grep -qxF '.tombstones/* merge=union' "$HOME/.proj/data/.gitattributes"
+  assert_success
+  # History line preserved exactly once
+  run bash -c "grep -c '^\*/history.log merge=union$' '$HOME/.proj/data/.gitattributes'"
+  assert_output "1"
+}
+
+@test "_proj_add keeps tombstone if data writes fail after the first" {
+  # Create a tombstone for foo without proj rm (simulates a state where
+  # foo was deleted on another machine and the tombstone pulled in).
+  mkdir -p "$HOME/.proj/data/.tombstones"
+  printf 'deleted-at=2026-04-14T00:00:00Z\nby-machine=other\n' \
+    > "$HOME/.proj/data/.tombstones/foo"
+  mkdir -p "$HOME/workspace/foo"
+
+  # Stub _proj_set and _proj_scan_with_claude before _proj_add runs its
+  # data writes, then invoke _proj_add. The stub records that _proj_set
+  # was called but returns failure (simulating a write error). Because
+  # the tombstone clear is now deferred to AFTER all data writes, the
+  # tombstone must still be present when _proj_add returns.
+  local driver="$HOME/drv.zsh"
+  cat > "$driver" <<'EOF'
+source "$PROJ_ROOT/proj.zsh"
+_proj_scan_with_claude() { return 0; }
+_proj_set() { return 1; }
+_proj_add foo "$HOME/workspace/foo" >/dev/null 2>&1 || true
+[[ -f "$HOME/.proj/data/.tombstones/foo" ]] && echo TOMBSTONE_KEPT
+EOF
+  run env PROJ_ROOT="$PROJ_ROOT" HOME="$HOME" zsh "$driver"
+  assert_success
+  assert_output --partial "TOMBSTONE_KEPT"
+}
+
 @test "sync: tombstone file is committed + tracked in the bare repo" {
   setup_git_identity
 

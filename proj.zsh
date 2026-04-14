@@ -67,6 +67,8 @@ _proj_i18n_en() {
     tombstone_recorded "  (tombstone recorded for '%s' — deletion will sync to other machines)"
     tombstone_cleared  "  (cleared tombstone for '%s' — re-add will sync)"
     tombstone_write_failed "Failed to write tombstone for '%s'. Project left intact."
+    tombstone_purged   "  purged tombstoned: %s"
+    tombstone_skipped  "  skipped tombstoned: %s"
     status_changed     "✓ %s → %s"
     field_updated      "✓ Updated %s.%s"
     no_projects        "No projects. Run proj add in a project directory."
@@ -258,6 +260,8 @@ _proj_i18n_zh() {
     tombstone_recorded "  (已为 '%s' 记录 tombstone —— 下次 sync 会传播删除)"
     tombstone_cleared  "  (已清除 '%s' 的 tombstone —— 重新添加将同步)"
     tombstone_write_failed "无法写入 '%s' 的 tombstone，项目未删除。"
+    tombstone_purged   "  已清除 tombstone 项目: %s"
+    tombstone_skipped  "  已跳过 tombstone 项目: %s"
     status_changed     "✓ %s → %s"
     field_updated      "✓ 已更新 %s.%s"
     no_projects        "没有项目。在项目目录下运行 proj add 添加。"
@@ -585,17 +589,6 @@ _proj_add() {
   projpath="${projpath/#\~/$HOME}"
   projpath="$(cd "$projpath" 2>/dev/null && pwd || echo "$projpath")"
 
-  # If this name was previously tombstoned (by us or another machine),
-  # re-adding signals intent to un-delete. Clear the tombstone so the
-  # next sync won't purge the freshly re-added project. We only clear
-  # for names that match the strict basename regex — `_proj_add` later
-  # enforces its own checks, but we guard the rm here too.
-  if [[ "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] \
-     && [[ -f "$PROJ_DATA/.tombstones/$name" ]]; then
-    rm -f -- "$PROJ_DATA/.tombstones/$name"
-    echo "${_pc_dim}$(_t tombstone_cleared "$name")${_pc_reset}"
-  fi
-
   if _proj_exists "$name"; then
     echo "${_pc_yellow}$(_t proj_exists "$name")${_pc_reset}"
     _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
@@ -608,13 +601,29 @@ _proj_add() {
     return 1
   fi
 
-  _proj_set "$name" "path" "$projpath"
-  _proj_set "$name" "type" "local"
-  _proj_set "$name" "status" "active"
-  _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
-  _proj_set "$name" "desc" ""
-  _proj_set "$name" "progress" ""
-  _proj_set "$name" "todo" ""
+  _proj_set "$name" "path" "$projpath" || return 1
+  _proj_set "$name" "type" "local"     || return 1
+  _proj_set "$name" "status" "active"  || return 1
+  _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')" || return 1
+  _proj_set "$name" "desc" ""          || return 1
+  _proj_set "$name" "progress" ""      || return 1
+  _proj_set "$name" "todo" ""          || return 1
+
+  # If this name was previously tombstoned (by us or another machine),
+  # re-adding signals intent to un-delete. Clear the tombstone only now
+  # that all synchronous data writes have succeeded — an earlier failure
+  # in _proj_add (any of the _proj_set calls above) returns non-zero and
+  # leaves the tombstone intact so the next sync still propagates the
+  # delete intent and does not see a half-written alive state. The
+  # claude scan below is best-effort; its failure must not revert the
+  # tombstone clear because the registration itself already succeeded.
+  # Guarded by the strict basename regex in case the name contains
+  # metachars (defense in depth against hand-edited state).
+  if [[ "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] \
+     && [[ -f "$PROJ_DATA/.tombstones/$name" ]]; then
+    rm -f -- "$PROJ_DATA/.tombstones/$name"
+    echo "${_pc_dim}$(_t tombstone_cleared "$name")${_pc_reset}"
+  fi
 
   echo "${_pc_green}$(_t proj_added "${_pc_bold}$name${_pc_reset}${_pc_green}" "$projpath")${_pc_reset}"
   echo ""
@@ -1276,15 +1285,19 @@ _proj_config_lang() {
 # because the idempotency grep would match the concatenated line).
 _proj_sync_ensure_gitattributes() {
   local gaf="$PROJ_DATA/.gitattributes"
-  if [[ -f "$gaf" ]] && grep -qxF '*/history.log merge=union' "$gaf"; then
-    return 0
+  local need_history=1 need_tombstones=1
+  if [[ -f "$gaf" ]]; then
+    grep -qxF '*/history.log merge=union' "$gaf" && need_history=0
+    grep -qxF '.tombstones/* merge=union' "$gaf" && need_tombstones=0
   fi
+  (( need_history == 0 && need_tombstones == 0 )) && return 0
   if [[ -s "$gaf" ]]; then
     local last_char
     last_char=$(tail -c 1 "$gaf" 2>/dev/null)
     [[ "$last_char" != $'\n' ]] && printf '\n' >> "$gaf"
   fi
-  printf '%s\n' '*/history.log merge=union' >> "$gaf"
+  (( need_history ))   && printf '%s\n' '*/history.log merge=union' >> "$gaf"
+  (( need_tombstones )) && printf '%s\n' '.tombstones/* merge=union' >> "$gaf"
 }
 
 # Walk $PROJ_DATA/.tombstones and, for any tombstone whose matching
@@ -1307,13 +1320,23 @@ _proj_sync_purge_tombstoned() {
     [[ "$tname" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || continue
     if [[ -d "$PROJ_DATA/$tname" ]]; then
       rm -rf -- "$PROJ_DATA/$tname"
-      echo "  purged tombstoned: $tname"
+      echo "$(_t tombstone_purged "$tname")"
     fi
   done
 }
 
 _proj_sync() {
+  # Loop-scoped locals declared up front — per gotcha #11, re-declaring
+  # `local` inside a for-loop body in zsh echoes prior values to stdout.
+  local tb tbname
   local repo=$(_proj_cfg_get sync_repo "")
+
+  # Self-heal: if a previous _proj_rm was killed between writing the
+  # tombstone and removing the data dir, the local state is inconsistent
+  # until the next post-pull purge. Running the idempotent purge at the
+  # very top of sync fixes that proactively. Cheap: returns immediately
+  # if $PROJ_DATA/.tombstones doesn't exist.
+  _proj_sync_purge_tombstoned
   if [[ -z "$repo" ]]; then
     echo "${_pc_red}No sync repo configured.${_pc_reset}"
     echo "  proj config sync-repo <git-url>"
@@ -1342,6 +1365,23 @@ _proj_sync() {
         return 1
       }
 
+      # Rescue local tombstones from the backup. Zsh's `*` glob skips
+      # dotdirs by default, so the merge-back loop below would never see
+      # $backup_dir/.tombstones/ and any delete intent recorded on this
+      # machine before sync-repo was configured would be silently lost
+      # when the fresh clone landed without those tombstones. Copy them
+      # over first; `_proj_sync_purge_tombstoned` below will then apply
+      # them, and the subsequent `git add -A && git commit` will push
+      # the rescued tombstones to the remote on the next step.
+      if [[ -d "$backup_dir/.tombstones" ]]; then
+        mkdir -p "$PROJ_DATA/.tombstones"
+        for tb in "$backup_dir/.tombstones"/*(N); do
+          tbname="${tb:t}"
+          [[ "$tbname" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || continue
+          [[ -f "$PROJ_DATA/.tombstones/$tbname" ]] || cp -- "$tb" "$PROJ_DATA/.tombstones/$tbname"
+        done
+      fi
+
       # Merge back local projects. Skip any name that the remote has
       # tombstoned — re-copying it from the local backup would silently
       # resurrect a project another machine already deleted.
@@ -1353,7 +1393,7 @@ _proj_sync() {
         local pname=$(basename "$local_proj")
         [[ "$pname" == .* ]] && continue
         if [[ -f "$PROJ_DATA/.tombstones/$pname" ]]; then
-          echo "  skipped tombstoned: $pname"
+          echo "$(_t tombstone_skipped "$pname")"
           continue
         fi
         if [[ -d "$PROJ_DATA/$pname" ]]; then
