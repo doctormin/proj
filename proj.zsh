@@ -137,8 +137,15 @@ _proj_i18n_en() {
 Available: %s"
     new_name_invalid   "Invalid project name. Use only letters, digits, '.', '_', '-'."
     new_target_exists  "Target directory already exists: %s"
+    new_target_bad_dash "Target cannot start with '-' (would be parsed as an option): %s"
+    new_parent_missing "Parent directory does not exist: %s"
+    new_mkdir_failed   "Could not create target directory: %s"
+    new_copy_failed    "Could not copy template into target: %s"
     new_already_registered "A project named '%s' already exists. Remove or rename it first."
     new_init_failed    "Template init script failed — target directory rolled back."
+    new_rollback_incomplete "Template init script failed. Target may not be fully removed; inspect: %s"
+    new_register_failed "Registration failed for '%s' — rolled back target directory."
+    new_tombstoned     "Project '%s' was deleted on another machine. Use 'proj add' to resurrect, or remove %s first."
     new_created        "✓ Created %s at %s"
     help_new           "Create new project from bundled template"
     export_no_jq       "proj export needs jq. Install it: brew install jq (or your package manager)."
@@ -330,8 +337,15 @@ _proj_i18n_zh() {
 可用模板: %s"
     new_name_invalid   "项目名非法。只能使用字母、数字、'.'、'_'、'-'。"
     new_target_exists  "目标目录已存在: %s"
+    new_target_bad_dash "目标路径以 '-' 开头会被解析为选项，已拒绝: %s"
+    new_parent_missing "父目录不存在: %s"
+    new_mkdir_failed   "无法创建目标目录: %s"
+    new_copy_failed    "无法复制模板到目标目录: %s"
     new_already_registered "已经存在同名项目 '%s'。请先删除或改名。"
     new_init_failed    "模板初始化脚本失败 —— 已回滚目标目录。"
+    new_rollback_incomplete "模板初始化脚本失败。目标目录可能未完全删除，请检查: %s"
+    new_register_failed "项目 '%s' 注册失败 —— 已回滚目标目录。"
+    new_tombstoned     "项目 '%s' 在另一台机器上已被删除。请使用 'proj add' 恢复，或先删除 %s。"
     new_created        "✓ 已创建 %s 于 %s"
     help_new           "从内置模板创建新项目"
     export_no_jq       "proj export 需要 jq。请先安装: brew install jq（或使用你的包管理器）。"
@@ -810,8 +824,18 @@ _proj_new() {
     return 1
   fi
 
-  # Tombstone / existing-project guard. _proj_exists covers the common
-  # path; the explicit dir check also catches half-baked leftovers.
+  # Tombstone guard. `proj new` creates a fresh, unrelated scaffold —
+  # it is not an undelete. Refuse if a tombstone exists for $name; the
+  # user must explicitly resurrect (proj add) or discard the tombstone.
+  # Without this, _proj_add's auto-clear silently resurrects the name
+  # with only a dim message, which is semantically misleading.
+  if [[ -f "$PROJ_DATA/.tombstones/$name" ]]; then
+    echo "${_pc_red}$(_t new_tombstoned "$name" "$PROJ_DATA/.tombstones/$name")${_pc_reset}"
+    return 1
+  fi
+
+  # Existing-project guard. _proj_exists covers the common path; the
+  # explicit dir check also catches half-baked leftovers.
   if _proj_exists "$name" || [[ -d "$PROJ_DATA/$name" ]]; then
     echo "${_pc_red}$(_t new_already_registered "$name")${_pc_reset}"
     return 1
@@ -828,12 +852,19 @@ _proj_new() {
   fi
   target="${target/#\~/$HOME}"
 
-  # Refuse a target that starts with `-` (would parse as an option in
-  # any downstream command). Matches the C1 clone helper's defense.
+  # Refuse a target that starts with `-` BEFORE canonicalization —
+  # otherwise :a would prepend $PWD and mask the leading dash.
   if [[ "$target" == -* ]]; then
-    echo "${_pc_red}$(_t new_target_exists "$target")${_pc_reset}"
+    echo "${_pc_red}$(_t new_target_bad_dash "$target")${_pc_reset}"
     return 1
   fi
+
+  # Canonicalize: zsh's :a modifier resolves `..` segments lexically
+  # (no symlink follow, no existence requirement). This prevents `..`
+  # from leaking into the stored path.<mid> file. We deliberately do
+  # NOT use :A — it would dereference symlinks like /var → /private/var
+  # on macOS, surprising users who passed a stable symlinked path.
+  target="${target:a}"
 
   # Never clobber an existing target — too destructive to guess at.
   if [[ -e "$target" ]]; then
@@ -841,21 +872,34 @@ _proj_new() {
     return 1
   fi
 
-  if ! mkdir -p -- "$(dirname -- "$target")" 2>/dev/null; then
-    echo "${_pc_red}$(_t clone_mkdir_failed "$(dirname -- "$target")")${_pc_reset}"
+  # Refuse if the parent doesn't already exist. Auto-creating with
+  # mkdir -p leaks intermediate parents on rollback (adv-001); we
+  # mirror `proj add <git-url>` and require the parent up front.
+  local parent_dir
+  parent_dir="$(dirname -- "$target")"
+  if [[ ! -d "$parent_dir" ]]; then
+    echo "${_pc_red}$(_t new_parent_missing "$parent_dir")${_pc_reset}"
     return 1
   fi
   if ! mkdir -- "$target" 2>/dev/null; then
-    echo "${_pc_red}$(_t new_target_exists "$target")${_pc_reset}"
+    echo "${_pc_red}$(_t new_mkdir_failed "$target")${_pc_reset}"
     return 1
   fi
 
   # Copy template contents (including dotfiles) into the target. The
   # trailing `/.` on the source means cp copies the CONTENTS of src,
   # not src itself — the dotfiles come along on both BSD and GNU cp.
+  #
+  # Each rollback site below distinguishes "rollback succeeded" from
+  # "rollback partial" (rm -rf failed — e.g. template made a chmod-000
+  # subdir). The partial path surfaces a distinct error pointing at the
+  # leaked path so the user isn't lied to.
   if ! cp -R -- "$src/." "$target/" 2>/dev/null; then
-    rm -rf -- "$target"
-    echo "${_pc_red}$(_t new_init_failed)${_pc_reset}"
+    if ! rm -rf -- "$target" 2>/dev/null; then
+      echo "${_pc_red}$(_t new_rollback_incomplete "$target")${_pc_reset}"
+    else
+      echo "${_pc_red}$(_t new_copy_failed "$target")${_pc_reset}"
+    fi
     return 1
   fi
 
@@ -864,19 +908,33 @@ _proj_new() {
   # regardless, so a template author can't accidentally leak it.
   if [[ -f "$target/.proj-init.sh" ]]; then
     if ! ( cd -- "$target" && bash ./.proj-init.sh "$name" "$target" ); then
-      rm -rf -- "$target"
-      echo "${_pc_red}$(_t new_init_failed)${_pc_reset}"
+      if ! rm -rf -- "$target" 2>/dev/null; then
+        echo "${_pc_red}$(_t new_rollback_incomplete "$target")${_pc_reset}"
+      else
+        echo "${_pc_red}$(_t new_init_failed)${_pc_reset}"
+      fi
       return 1
     fi
     rm -f -- "$target/.proj-init.sh"
   fi
 
-  echo "${_pc_green}$(_t new_created "${_pc_bold}$name${_pc_reset}${_pc_green}" "$target")${_pc_reset}"
-
   # Register as a normal local project. _proj_add also triggers the
   # AI scan (or silently skips it when claude is not on PATH), so we
-  # don't call _proj_scan_with_claude again here.
-  _proj_add "$name" "$target"
+  # don't call _proj_scan_with_claude again here. If registration
+  # fails (disk full, scan abort, etc.) we roll back the target so the
+  # user doesn't see an orphan dir blocking the next `proj new` retry.
+  if ! _proj_add "$name" "$target"; then
+    if ! rm -rf -- "$target" 2>/dev/null; then
+      echo "${_pc_red}$(_t new_rollback_incomplete "$target")${_pc_reset}"
+    else
+      echo "${_pc_red}$(_t new_register_failed "$name")${_pc_reset}"
+    fi
+    return 1
+  fi
+
+  # Success message comes AFTER registration so users never see
+  # "✓ Created" while registration is still in flight.
+  echo "${_pc_green}$(_t new_created "${_pc_bold}$name${_pc_reset}${_pc_green}" "$target")${_pc_reset}"
 }
 
 # ── proj add-remote ──

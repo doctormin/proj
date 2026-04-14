@@ -22,6 +22,10 @@ setup() {
   export PROJ_TEMPLATE_DIR="$PROJ_ROOT/templates"
 
   mkdir -p "$HOME"
+  # Pre-create the parent dirs the tests scaffold into. `proj new` no
+  # longer auto-creates intermediate parents (matches `proj add <url>`),
+  # so the test harness has to set up the parent up front.
+  mkdir -p "$TEST_HOME/out" "$TEST_HOME/clones"
 }
 
 # ── happy paths ──────────────────────────────────────────────────────────
@@ -177,6 +181,61 @@ setup() {
   run proj new node
   assert_failure
   assert_output --partial "Usage: proj new"
+}
+
+@test "proj new: parent directory does not exist → error, no leftover dirs" {
+  run proj new node myapp "$TEST_HOME/nonexistent-parent/myapp"
+  assert_failure
+  assert_output --partial "Parent directory does not exist"
+  [ ! -d "$TEST_HOME/nonexistent-parent" ]
+  [ ! -d "$(proj_data_dir)/myapp" ]
+}
+
+@test "proj new: target path with .. is canonicalized in stored path" {
+  mkdir -p "$TEST_HOME/out/sub"
+  # Pass a path with a `..` segment; after :A it should resolve to
+  # $TEST_HOME/out/widget — no `..` in the stored path.<mid> file.
+  run proj new rust widget "$TEST_HOME/out/sub/../widget"
+  assert_success
+  local mid; mid="$(machine_id)"
+  local stored; stored="$(cat "$(proj_data_dir)/widget/path.$mid")"
+  assert_equal "$stored" "$TEST_HOME/out/widget"
+  [[ "$stored" != *..* ]]
+}
+
+@test "proj new: tombstoned name is refused (no silent resurrection)" {
+  # Tombstones live under $PROJ_DATA/.tombstones (= ~/.proj/data/.tombstones).
+  # Place one before invoking `proj new`; proj.zsh's source-time migrate
+  # creates the dir, but we make sure it exists first since this test
+  # runs before any proj command.
+  mkdir -p "$HOME/.proj/data/.tombstones"
+  : > "$HOME/.proj/data/.tombstones/ghost"
+  run proj new node ghost "$TEST_HOME/out/ghost"
+  assert_failure
+  assert_output --partial "deleted on another machine"
+  [ ! -d "$TEST_HOME/out/ghost" ]
+  [ ! -d "$(proj_data_dir)/ghost" ]
+}
+
+@test "proj new: target with leading - is rejected with bad-dash error" {
+  run proj new node myapp "-evil"
+  assert_failure
+  assert_output --partial "would be parsed as an option"
+  [ ! -d "-evil" ]
+  [ ! -d "$(proj_data_dir)/myapp" ]
+}
+
+@test "proj new: _proj_add failure rolls back target dir" {
+  # Force registration to fail by making PROJ_DATA read-only AFTER the
+  # source-time mkdir. We use proj_after to interleave: source proj.zsh
+  # (which creates ~/.proj), then chmod, then run `proj new`.
+  run proj_after 'chmod a-w "$HOME/.proj/data"' new node myapp "$TEST_HOME/out/myapp"
+  # Restore so teardown can clean up.
+  chmod u+w "$HOME/.proj/data" 2>/dev/null || true
+  assert_failure
+  assert_output --partial "Registration failed"
+  [ ! -d "$TEST_HOME/out/myapp" ]
+  [ ! -d "$(proj_data_dir)/myapp" ]
 }
 
 @test "proj new node: registered name recoverable via proj get/list" {
