@@ -7,13 +7,13 @@ load '../test_helper'
 @test "proj --version prints version string" {
   run proj --version
   assert_success
-  assert_output --partial "proj 1.0.0"
+  assert_output --partial "proj 1.1.0-dev"
 }
 
 @test "proj -v is alias for --version" {
   run proj -v
   assert_success
-  assert_output --partial "proj 1.0.0"
+  assert_output --partial "proj 1.1.0-dev"
 }
 
 @test "sourcing proj.zsh creates ~/.proj/data" {

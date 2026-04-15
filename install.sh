@@ -2,7 +2,7 @@
 # proj installer — works both from local clone and curl pipe
 set -e
 
-PROJ_VERSION="1.0.0"
+PROJ_VERSION="1.1.0-dev"
 PROJ_DIR="$HOME/.proj"
 GITHUB_REPO="doctormin/proj"
 

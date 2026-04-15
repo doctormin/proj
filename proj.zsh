@@ -3,7 +3,7 @@
 # Data: ~/.proj/data/<name>/  (one directory per project)
 # Usage: proj [add|rm|status|edit|scan|help]  or just `proj` for interactive panel
 
-PROJ_VERSION="1.0.0"
+PROJ_VERSION="1.1.0-dev"
 PROJ_DIR="$HOME/.proj"
 PROJ_DATA="$PROJ_DIR/data"
 PROJ_CONFIG="$PROJ_DIR/config"
