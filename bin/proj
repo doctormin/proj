@@ -89,18 +89,42 @@ valid_field() {
   esac
 }
 
-# remote_shell has its own allowlist: only characters that proj.zsh's
-# _proj_valid_remote_shell accepts. Rejecting here (before the confirm
-# gate) means a prompt-injected `proj edit foo remote_shell "; evil"`
-# never reaches the delegate_zsh layer.
+# remote_shell has its own allowlist. The shim validator is deliberately
+# coarser than proj.zsh's _proj_valid_remote_shell (which does structural
+# shell+flag parsing via zsh's ${(z)}): bash 3.2 — the macOS default —
+# makes that painful to replicate here. The character-class + newline
+# rejection below is enough to block the P0 RCE surface at this layer.
+# The authoritative structural gate runs inside proj.zsh when `proj cc`
+# resolves the field; the shim's job is simply to refuse obviously
+# dangerous values before reaching the confirm prompt.
+#
+# Two historical bugs this closes:
+#   1. `grep -Eq '^...$'` is LINE-oriented, so a multi-line value where
+#      at least one line matched returned 0, letting a newline-carrying
+#      payload through to disk. Rewritten using pure shell case-glob.
+#   2. POSIX `[[:space:]]` includes \n\r\v\f, so the original allowlist
+#      was complicit in the first bug. Replaced with literal space + tab.
 valid_remote_shell() {
+  [ -n "${1:-}" ] || return 1
+  # Reject embedded newline / carriage return outright. These characters
+  # reach the remote login shell as command separators via the unquoted
+  # interpolation in _proj_ssh_remote_claude, so a stored value like
+  # $'zsh -ic\nrm -rf ~' yielded RCE.
   case "$1" in
-    '') return 1 ;;
+    *$'\n'*|*$'\r'*) return 1 ;;
   esac
-  if printf '%s' "$1" | grep -Eq '^[[:alnum:][:space:]._/-]+$'; then
-    return 0
-  fi
-  return 1
+  # Bracket glob negation: match any character NOT in the allowlist.
+  # The class includes a literal space, literal tab, the 62 alnum chars,
+  # and . _ / -. If $1 contains any character outside this set, reject.
+  case "$1" in
+    *[!" "$'\t'A-Za-z0-9._/-]*) return 1 ;;
+  esac
+  # Reject whitespace-only input. Without this an input of "   " would
+  # pass the character class and then fail opaquely at ssh time.
+  local stripped
+  stripped=$(printf '%s' "$1" | tr -d ' \t')
+  [ -n "$stripped" ] || return 1
+  return 0
 }
 
 valid_status() {

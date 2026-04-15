@@ -25,6 +25,14 @@ _proj_cfg_get() {
 
 _proj_cfg_set() {
   # _proj_cfg_set <key> <value>
+  # Refuse multi-line values. Writing `echo "$1=$2" >> file` happily
+  # dumps multiple physical lines when $2 contains a newline, planting
+  # phantom keys into sibling config entries (e.g. sync_repo). This is
+  # a general-purpose writer, so the guard lives here and not only at
+  # the individual call sites.
+  case "$2" in
+    *$'\n'*|*$'\r'*) return 1 ;;
+  esac
   if [[ -f "$PROJ_CONFIG" ]] && grep -q "^$1=" "$PROJ_CONFIG" 2>/dev/null; then
     local tmpf=$(mktemp)
     sed "s|^$1=.*|$1=$2|" "$PROJ_CONFIG" > "$tmpf" && mv "$tmpf" "$PROJ_CONFIG"
@@ -172,6 +180,8 @@ Available: %s"
     cfg_remote_shell   "Remote shell wrapper"
     cfg_remote_shell_current "Current global remote shell: %s"
     cfg_remote_shell_unset "No global remote shell configured (default: bash -lc)."
+    cfg_remote_shell_cleared "✓ Global remote shell cleared (default: bash -lc)."
+    cfg_remote_shell_already_unset "(already unset — no global remote shell was configured)"
     cfg_remote_shell_set "✓ Global remote shell set to: %s"
     cfg_remote_shell_bad "Refusing remote shell with unsafe characters: '%s'"
     filter_unknown     "Unknown filter: %s"
@@ -380,6 +390,8 @@ _proj_i18n_zh() {
     cfg_remote_shell   "远端 shell 包装"
     cfg_remote_shell_current "当前全局远端 shell: %s"
     cfg_remote_shell_unset "未配置全局远端 shell（默认: bash -lc）。"
+    cfg_remote_shell_cleared "✓ 已清空全局远端 shell（默认: bash -lc）。"
+    cfg_remote_shell_already_unset "（原本就未设置 — 没有可清空的全局远端 shell）"
     cfg_remote_shell_set "✓ 全局远端 shell 已设为: %s"
     cfg_remote_shell_bad "远端 shell 含有不安全字符，已拒绝: '%s'"
     filter_unknown     "未知的过滤关键字: %s"
@@ -1332,13 +1344,23 @@ _proj_config() {
     fi
     local rs_val="$2"
     if [[ -z "$rs_val" ]]; then
-      # Clear: rewrite config without the key.
-      if [[ -f "$PROJ_CONFIG" ]]; then
+      # Differentiate "cleared an existing value" from "there was
+      # nothing to clear". Before: both paths printed the same green
+      # "no global remote shell configured" line, which misled users
+      # into thinking they had just removed something when they
+      # hadn't.
+      local had_value=0
+      if [[ -f "$PROJ_CONFIG" ]] && grep -q '^remote_shell=' "$PROJ_CONFIG" 2>/dev/null; then
+        had_value=1
         local tmpf=$(mktemp)
         grep -v '^remote_shell=' "$PROJ_CONFIG" > "$tmpf" 2>/dev/null || true
         mv "$tmpf" "$PROJ_CONFIG"
       fi
-      echo "${_pc_green}${_i[cfg_remote_shell_unset]}${_pc_reset}"
+      if (( had_value )); then
+        echo "${_pc_green}${_i[cfg_remote_shell_cleared]}${_pc_reset}"
+      else
+        echo "${_pc_dim}${_i[cfg_remote_shell_already_unset]}${_pc_reset}"
+      fi
       return
     fi
     if ! _proj_valid_remote_shell "$rs_val"; then
@@ -1785,15 +1807,76 @@ METAEOF
 
 # ── _proj_valid_remote_shell ──
 # Single-source validator for any value that will be interpolated unquoted
-# into the ssh argv as the remote wrapper command. Enforces a conservative
-# allowlist — letters, digits, space, tab, dot, dash, underscore, forward
-# slash — enough to express `bash -lc`, `zsh -ic`, `fish -ic`, or a
-# fully-qualified path like `/usr/bin/env bash -lc`, but nothing that
-# could smuggle in quoting, redirection, or a second command.
+# into the ssh argv as the remote wrapper command.
+#
+# Two-layer check:
+#   (1) Character allowlist — letters, digits, LITERAL space/tab, dot,
+#       dash, underscore, forward slash. Historically this used
+#       [[:space:]], which on every POSIX locale includes \n\r\v\f —
+#       so a stored value like $'zsh -ic\nrm -rf ~' passed the regex
+#       and then reached the ssh invocation, where the remote login
+#       shell re-parsed the newline as a command separator. The fix
+#       switches to `[ \t]` literals and adds an explicit \n/\r
+#       pre-check as belt-and-braces.
+#   (2) Structural gate — tokenize with ${(z)v} and require the first
+#       token's basename to be a known shell (bash, zsh, fish, sh,
+#       dash, ksh) and at least one subsequent token to be a command-
+#       mode flag from a narrow whitelist. Rejects values like `cat`
+#       or `tee /tmp/log` that happen to pass the character class but
+#       aren't actually shell wrappers.
+#
+# Refuses empty and whitespace-only input.
 _proj_valid_remote_shell() {
   local v="$1"
   [[ -n "$v" ]] || return 1
-  [[ "$v" =~ ^[[:alnum:][:space:]._/-]+$ ]]
+  # (1a) Explicit CR/LF rejection. Closes the [[:space:]] hole above
+  # and is robust against locale or zsh regex quirks.
+  [[ "$v" == *$'\n'* || "$v" == *$'\r'* ]] && return 1
+  # (1b) Reject whitespace-only values (validator used to accept
+  # "   " and then fail mysteriously when ssh received an empty
+  # argv slot).
+  [[ -n "${v//[[:space:]]/}" ]] || return 1
+  # (1c) Character allowlist using literal space and tab — not
+  # [[:space:]]. The $'...' form is needed so the literal tab
+  # inside the class survives zsh parsing.
+  [[ "$v" =~ $'^[[:alnum:] \t._/-]+$' ]] || return 1
+
+  # (2) Structural shell+flag gate. ${(z)v} honours POSIX quoting
+  # but our character class already rejected quotes, so this is
+  # really just a whitespace split. 2-4 tokens allowed: e.g.
+  # `bash -lc`, `/usr/bin/env bash -lc`, `zsh -i -c` would be 3-4
+  # tokens; single-flag compact forms like `-lc` stay 2 tokens.
+  local -a toks
+  toks=(${(z)v})
+  (( ${#toks} >= 2 && ${#toks} <= 4 )) || return 1
+
+  # First token may be an env wrapper (`/usr/bin/env`) OR a shell.
+  # If it's env, shift so the shell token is examined next.
+  local first="${toks[1]}"
+  local first_base="${first:t}"
+  local shell_idx=1
+  if [[ "$first_base" == "env" ]]; then
+    (( ${#toks} >= 3 )) || return 1
+    shell_idx=2
+  fi
+  local shell_tok="${toks[$shell_idx]}"
+  local shell_base="${shell_tok:t}"
+  case "$shell_base" in
+    bash|zsh|fish|sh|dash|ksh) : ;;
+    *) return 1 ;;
+  esac
+
+  # Remaining tokens must all be command-mode flags from the
+  # whitelist. At least one `-c`-bearing flag is required.
+  local i found_cmd_flag=0
+  for ((i = shell_idx + 1; i <= ${#toks}; i++)); do
+    case "${toks[i]}" in
+      -c|-lc|-ic|-li|-il|-lic|-ilc|-cl|-ci) found_cmd_flag=1 ;;
+      *) return 1 ;;
+    esac
+  done
+  (( found_cmd_flag )) || return 1
+  return 0
 }
 
 # ── _proj_resolve_remote_shell ──
@@ -1861,6 +1944,15 @@ _proj_ssh_remote_claude() {
     echo "${_pc_red}$(_t remote_bad_shell "$remote_shell")${_pc_reset}"
     return 1
   fi
+  # Belt-and-braces: re-reject embedded newlines/CRs right before the
+  # unquoted interpolation below. _proj_valid_remote_shell already
+  # refuses these, but this second check means ANY future refactor of
+  # the validator can't silently reintroduce the injection surface.
+  case "$remote_shell" in
+    *$'\n'*|*$'\r'*)
+      echo "${_pc_red}$(_t remote_bad_shell "$remote_shell")${_pc_reset}"
+      return 1 ;;
+  esac
 
   echo "${_pc_cyan}$(_t remote_cc_connecting "$host" "$rpath")${_pc_reset}"
   _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"

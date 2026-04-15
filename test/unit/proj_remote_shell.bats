@@ -104,22 +104,75 @@ _validate_rs() {
 
 @test "validator accepts common shell wrappers" {
   setup_rs
-  _validate_rs 'bash -lc'
-  _validate_rs 'zsh -ic'
-  _validate_rs 'fish -ic'
-  _validate_rs '/usr/bin/env bash -lc'
-  _validate_rs '/bin/bash -lc'
+  run _validate_rs 'bash -lc'
+  assert_success
+  run _validate_rs 'zsh -ic'
+  assert_success
+  run _validate_rs 'fish -ic'
+  assert_success
+  run _validate_rs '/usr/bin/env bash -lc'
+  assert_success
+  run _validate_rs '/bin/bash -lc'
+  assert_success
 }
 
 @test "validator rejects shell metacharacters" {
+  # NOTE: historically these were written as `! _validate_rs ...` but
+  # under bats + `set -e`, negated commands suppress errexit and the
+  # assertion collapses to a no-op — so the test reported ok against
+  # the BROKEN validator that accepted $'bash -lc\nevil'. Use `run` +
+  # `assert_failure` to make the assertion load-bearing.
   setup_rs
-  ! _validate_rs 'bash;evil'
-  ! _validate_rs 'bash|evil'
-  ! _validate_rs 'bash$(evil)'
-  ! _validate_rs 'bash`evil`'
-  ! _validate_rs 'bash -lc
-evil'
-  ! _validate_rs 'bash -lc "echo"'
+  run _validate_rs 'bash;evil'
+  assert_failure
+  run _validate_rs 'bash|evil'
+  assert_failure
+  run _validate_rs 'bash$(evil)'
+  assert_failure
+  run _validate_rs 'bash`evil`'
+  assert_failure
+  run _validate_rs $'bash -lc\nevil'
+  assert_failure
+  run _validate_rs $'bash -lc\revil'
+  assert_failure
+  run _validate_rs 'bash -lc "echo"'
+  assert_failure
+}
+
+@test "validator rejects P0 newline injection payload" {
+  # End-to-end reproduction from the round-1 review: a multi-line
+  # value that would split into two commands on the remote side.
+  setup_rs
+  run _validate_rs $'zsh -ic\nrm -rf ~'
+  assert_failure
+}
+
+@test "validator rejects whitespace-only and empty" {
+  setup_rs
+  run _validate_rs ''
+  assert_failure
+  run _validate_rs '   '
+  assert_failure
+  run _validate_rs $'\t\t'
+  assert_failure
+}
+
+@test "validator structural gate rejects non-shell commands that pass char class" {
+  # Character-class alone is too permissive: `cat`, `sh -c` with a
+  # bare trailing script, arbitrary binaries. The structural
+  # shell+flag gate enforces that token 1's basename is an actual
+  # shell and token 2+ are command-mode flags from a small whitelist.
+  setup_rs
+  run _validate_rs 'cat'
+  assert_failure
+  run _validate_rs 'tee /tmp/log'
+  assert_failure
+  run _validate_rs 'bash'
+  assert_failure   # no command-mode flag
+  run _validate_rs 'bash -x'
+  assert_failure   # -x is not a command-mode flag
+  run _validate_rs 'bash -lc payload'
+  assert_failure   # bare argument after the flag
 }
 
 # ── auto-detect at add-remote ────────────────────────────────────────────
@@ -275,4 +328,75 @@ evil'
   assert_failure
   assert_output --partial "unsafe characters"
   [ ! -f "$HOME/.proj/data/srv-a/remote_shell" ]
+}
+
+@test "shim: edit <name> remote_shell rejects newline payload at shim layer" {
+  # P0 closure at the bin/proj layer. `grep -Eq '^...$'` was line-
+  # oriented, so a multi-line value where at least one line matched
+  # previously returned 0 and the payload reached disk.
+  setup_rs
+  _mk_remote srv-a
+  PROJ_SHIM_CONFIRM=y run "$SHIM" edit srv-a remote_shell $'zsh -ic\nrm -rf ~'
+  assert_failure
+  assert_output --partial "unsafe"
+  [ ! -f "$HOME/.proj/data/srv-a/remote_shell" ]
+}
+
+# ── auto-detect idempotency (direct call) ────────────────────────────────
+
+@test "auto-detect: idempotency guard skips when field already set" {
+  # The existing "does not clobber" test hits the proj_add_remote
+  # early-return path (pre-existing project dir makes add-remote
+  # error out before auto-detect is even called) and never actually
+  # exercises the idempotency guard inside _proj_autodetect_remote_shell.
+  # This test calls the guard directly.
+  setup_rs
+  proj list >/dev/null
+  mkdir -p "$HOME/.proj/data/srv-a"
+  echo "fish -ic" > "$HOME/.proj/data/srv-a/remote_shell"
+  SSH_MOCK_DETECT_SHELL=/bin/zsh run zsh -c \
+    'source "$1" && _proj_autodetect_remote_shell srv-a user@ai4s' \
+    _ "$PROJ_ROOT/proj.zsh"
+  assert_success
+  assert_equal "$(cat "$HOME/.proj/data/srv-a/remote_shell")" "fish -ic"
+}
+
+# ── config unset UX differentiation ──────────────────────────────────────
+
+@test "config: clearing an unset remote_shell prints 'already unset'" {
+  setup_rs
+  proj list >/dev/null
+  # Config file may not even exist.
+  run proj config remote_shell ""
+  assert_success
+  assert_output --partial "already unset"
+}
+
+@test "config: clearing a set remote_shell prints 'cleared'" {
+  setup_rs
+  proj list >/dev/null
+  proj config remote_shell "zsh -ic" >/dev/null
+  run proj config remote_shell ""
+  assert_success
+  assert_output --partial "cleared"
+  ! grep -q '^remote_shell=' "$HOME/.proj/config" 2>/dev/null
+}
+
+# ── _proj_cfg_set hardening ──────────────────────────────────────────────
+
+@test "cfg_set: refuses newline in value" {
+  # General-purpose writer should defend against multi-line values
+  # regardless of the field-specific validator above.
+  setup_rs
+  proj list >/dev/null
+  # Pass the multi-line value via an env var so we don't have to
+  # fight bats+zsh quoting for literal $'\n' in the command string.
+  PROJ_TEST_PAYLOAD=$'https://ok\nphantom=bad' \
+    run zsh -c 'source "$1" && _proj_cfg_set sync_repo "$PROJ_TEST_PAYLOAD"' \
+    _ "$PROJ_ROOT/proj.zsh"
+  assert_failure
+  # And the config file must not contain the phantom line.
+  if [ -f "$HOME/.proj/config" ]; then
+    ! grep -q '^phantom=' "$HOME/.proj/config"
+  fi
 }
