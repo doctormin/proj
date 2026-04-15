@@ -67,13 +67,27 @@ get() {
   [[ -f "$dir/$1" ]] && cat "$dir/$1" || echo ""
 }
 
-st=$(get status)
-proj_type=$(get type)
-path=$(get path)
-host=$(get host)
-remote_path=$(get remote_path)
+# Sanitize a single-line field value before rendering to the fzf preview
+# pane. Strips C0 control bytes (0x00-0x1F — includes ESC, CR, BEL, TAB)
+# and DEL (0x7F). Preserves printable ASCII and UTF-8 continuation bytes.
+# See proj.zsh _proj_safe_line for the threat rationale (sync-pull
+# control-sequence injection). Called from every render site below;
+# multiline fields (desc/progress/todo/tags) split on newline FIRST
+# and sanitize each line so legitimate line breaks are preserved.
+safe_line() {
+  printf '%s' "$1" | LC_ALL=C tr -d '\000-\037\177' 2>/dev/null
+}
+
+st=$(safe_line "$(get status)")
+proj_type=$(safe_line "$(get type)")
+path=$(safe_line "$(get path)")
+host=$(safe_line "$(get host)")
+remote_path=$(safe_line "$(get remote_path)")
+# desc / progress / todo / tags are multiline — DO NOT sanitize the whole
+# blob here (it would collapse to a single line). Per-line sanitization
+# happens at the render call sites below.
 desc=$(get desc)
-updated=$(get updated)
+updated=$(safe_line "$(get updated)")
 progress=$(get progress)
 todo=$(get todo)
 tags=$(get tags)
@@ -110,7 +124,7 @@ if [[ -n "$tags" ]]; then
   chips=""
   while IFS= read -r _tag; do
     [[ -z "$_tag" ]] && continue
-    chips+=" ${C}#${_tag}${R}"
+    chips+=" ${C}#$(safe_line "$_tag")${R}"
   done <<< "$tags"
   echo -e "  ${D}Tags:${R}${chips}"
 fi
@@ -118,19 +132,19 @@ echo ""
 
 if [[ -n "$desc" ]]; then
   echo -e "  ${B}${L_DESC}${R}"
-  echo "$desc" | while IFS= read -r line; do echo "  $line"; done
+  echo "$desc" | while IFS= read -r line; do echo "  $(safe_line "$line")"; done
   echo ""
 fi
 
 if [[ -n "$progress" ]]; then
   echo -e "  ${B}${C}${L_PROGRESS}${R}"
-  echo "$progress" | while IFS= read -r line; do echo "  $line"; done
+  echo "$progress" | while IFS= read -r line; do echo "  $(safe_line "$line")"; done
   echo ""
 fi
 
 if [[ -n "$todo" ]]; then
   echo -e "  ${B}${Y}${L_TODO}${R}"
-  echo "$todo" | while IFS= read -r line; do echo "  $line"; done
+  echo "$todo" | while IFS= read -r line; do echo "  $(safe_line "$line")"; done
   echo ""
 fi
 

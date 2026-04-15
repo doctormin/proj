@@ -606,6 +606,29 @@ _proj_migrate() {
 
 _proj_path_to_claude_dir() { echo "${1//\//-}"; }
 
+# Sanitize a single-line field value before rendering to the terminal.
+# Strips C0 control bytes (0x00-0x1F — includes ESC, CR, LF, BEL, TAB) and
+# DEL (0x7F). Preserves printable ASCII and UTF-8 continuation bytes
+# (0x80-0xFF) so CJK, emoji, and extended Latin survive untouched.
+#
+# Threat: project field files (`desc`, `host`, `remote_path`, `path`,
+# `status`, `updated`, etc.) are pulled verbatim via `proj sync` from a
+# shared git repo. Any collaborator with push access can plant a field
+# containing `\033[2J` (clear screen), `\r` (line overwrite), OSC-52
+# clipboard writes, or terminal-specific CVE payloads. Renderers must
+# pipe user-controlled field values through this helper before reaching
+# stdout.
+#
+# Multiline fields (`desc`, `progress`, `todo`) split on newline FIRST
+# and then pass each line through this helper — callers control the
+# line break semantics themselves.
+#
+# Uses LC_ALL=C so `tr` operates byte-wise and doesn't choke on invalid
+# UTF-8 from a malicious or corrupt field file.
+_proj_safe_line() {
+  printf '%s' "$1" | LC_ALL=C tr -d '\000-\037\177' 2>/dev/null
+}
+
 # Returns 0 if $1 looks like a git-clonable URL (https://, git://, ssh://,
 # file://, or the scp-like user@host:path form). Used by _proj_add to
 # dispatch URL inputs to the clone path instead of the local-directory
@@ -1151,14 +1174,17 @@ _proj_scan_with_claude() {
   _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
 
   echo ""
-  echo "${_pc_green}${_pc_bold}[$name]${_pc_reset} $desc"
+  # Sanitize before rendering (defense in depth — even though $desc/$progress
+  # /$todo came from a local claude invocation in this path, the same fields
+  # are re-rendered later from disk where sync-pulled content could live).
+  echo "${_pc_green}${_pc_bold}[$name]${_pc_reset} $(_proj_safe_line "$desc")"
   if [[ -n "$progress" ]]; then
     echo "${_pc_cyan}${_i[progress]}:${_pc_reset}"
-    echo "$progress" | while IFS= read -r l; do echo "  $l"; done
+    echo "$progress" | while IFS= read -r l; do echo "  $(_proj_safe_line "$l")"; done
   fi
   if [[ -n "$todo" ]]; then
     echo "${_pc_yellow}TODO:${_pc_reset}"
-    echo "$todo" | while IFS= read -r l; do echo "  $l"; done
+    echo "$todo" | while IFS= read -r l; do echo "  $(_proj_safe_line "$l")"; done
   fi
   echo ""
 }
@@ -2710,11 +2736,19 @@ _proj_list_compact() {
     projpath=$(_proj_get "$name" "path")
     updated=$(_proj_get "$name" "updated")
 
+    # Sanitize single-line fields BEFORE any composition / truncation so a
+    # malicious sync-pull field containing raw ANSI/CR/ESC bytes cannot
+    # reach the terminal. See _proj_safe_line doc above for the threat.
+    ptype=$(_proj_safe_line "$ptype")
+    projpath=$(_proj_safe_line "$projpath")
+    updated=$(_proj_safe_line "$updated")
+    st=$(_proj_safe_line "$st")
+
     # Remote projects: show host:remote_path (mirrors verbose mode + preview.sh).
     display="$projpath"
     if [[ "$ptype" == "remote" ]]; then
-      host=$(_proj_get "$name" "host")
-      rpath=$(_proj_get "$name" "remote_path")
+      host=$(_proj_safe_line "$(_proj_get "$name" "host")")
+      rpath=$(_proj_safe_line "$(_proj_get "$name" "remote_path")")
       if [[ -n "$host" || -n "$rpath" ]]; then
         display="${host}:${rpath}"
       fi
@@ -2819,14 +2853,22 @@ _proj_list_verbose() {
     progress=$(_proj_get "$name" "progress")
     todo=$(_proj_get "$name" "todo")
 
+    # Sanitize single-line fields before rendering (_proj_safe_line doc).
+    # Multiline fields (desc/progress/todo) are sanitized per-line below
+    # so legitimate newlines in user content are preserved.
+    ptype=$(_proj_safe_line "$ptype")
+    projpath=$(_proj_safe_line "$projpath")
+    updated=$(_proj_safe_line "$updated")
+    st=$(_proj_safe_line "$st")
+
     # Remote projects have no local path on this machine; show host:remote_path
     # so the arrow isn't a dangling placeholder. preview.sh already renders
     # remote projects this way (see preview.sh ~line 94); this aligns `proj ls`
     # with the interactive panel. B3 fix.
     display="$projpath"
     if [[ "$ptype" == "remote" ]]; then
-      host=$(_proj_get "$name" "host")
-      rpath=$(_proj_get "$name" "remote_path")
+      host=$(_proj_safe_line "$(_proj_get "$name" "host")")
+      rpath=$(_proj_safe_line "$(_proj_get "$name" "remote_path")")
       if [[ -n "$host" || -n "$rpath" ]]; then
         display="${host}:${rpath}"
       fi
@@ -2845,16 +2887,18 @@ _proj_list_verbose() {
     printf "  ${color}%-8s${_pc_reset}" "$st"
     [[ -n "$updated" ]] && printf "  ${_pc_dim}$(_t last_updated "$updated")${_pc_reset}"
     echo ""
-    [[ -n "$desc" ]] && echo "      ${_pc_dim}$desc${_pc_reset}"
+    # Sanitize multiline content per-line: strips control bytes from each
+    # visible line while preserving the user's intended newline structure.
+    [[ -n "$desc" ]] && echo "$desc" | while IFS= read -r line; do echo "      ${_pc_dim}$(_proj_safe_line "$line")${_pc_reset}"; done
     echo "      ${_pc_dim}→ $display${_pc_reset}"
 
     if [[ -n "$progress" ]]; then
       echo "      ${_pc_cyan}${_i[progress]}:${_pc_reset}"
-      echo "$progress" | head -3 | while read -r line; do echo "        ${_pc_dim}$line${_pc_reset}"; done
+      echo "$progress" | head -3 | while read -r line; do echo "        ${_pc_dim}$(_proj_safe_line "$line")${_pc_reset}"; done
     fi
     if [[ -n "$todo" ]]; then
       echo "      ${_pc_yellow}TODO:${_pc_reset}"
-      echo "$todo" | head -3 | while read -r line; do echo "        $line"; done
+      echo "$todo" | head -3 | while read -r line; do echo "        $(_proj_safe_line "$line")"; done
     fi
     echo ""
     ((i++))
@@ -3015,7 +3059,14 @@ _proj_history() {
       *)      color="$_pc_dim"    ;;
     esac
 
-    printf "  ${_pc_dim}%-12s${_pc_reset}  ${color}%-7s${_pc_reset}  %s\n" "$rel" "$type" "$detail"
+    # Sanitize history fields before rendering — history.log is written by
+    # this tool on every mutation but sync-pull can bring in lines from
+    # another machine that could contain raw ESC bytes if that machine was
+    # compromised or its log was hand-edited.
+    printf "  ${_pc_dim}%-12s${_pc_reset}  ${color}%-7s${_pc_reset}  %s\n" \
+      "$(_proj_safe_line "$rel")" \
+      "$(_proj_safe_line "$type")" \
+      "$(_proj_safe_line "$detail")"
   done <<< "$sorted"
   echo ""
 }
@@ -3065,7 +3116,12 @@ _proj_stale() {
     else
       color="$_pc_dim"
     fi
-    printf "  ${color}%4dd${_pc_reset}  ${_pc_bold}%-18s${_pc_reset}  %-8s  ${_pc_dim}last: %s${_pc_reset}\n" "$age" "$nm" "$stt" "$upd"
+    # Sanitize field values before rendering (see _proj_safe_line doc).
+    printf "  ${color}%4dd${_pc_reset}  ${_pc_bold}%-18s${_pc_reset}  %-8s  ${_pc_dim}last: %s${_pc_reset}\n" \
+      "$age" \
+      "$(_proj_safe_line "$nm")" \
+      "$(_proj_safe_line "$stt")" \
+      "$(_proj_safe_line "$upd")"
   done <<< "$sorted"
   echo ""
 }

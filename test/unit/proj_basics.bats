@@ -328,3 +328,134 @@ _count_nonblank_lines() {
   assert_success
   assert_output --partial "unknown"
 }
+
+# ── P1 adversarial regression: control-sequence injection via field files ──
+
+# Helper: write a field file directly with raw bytes. Used to simulate a
+# sync-pulled payload from a compromised peer that bypasses _proj_set's
+# validation and lands a control sequence in a rendered field.
+_plant_evil_field() {
+  local pname="$1" field="$2" payload="$3"
+  mkdir -p "$(proj_data_dir)/$pname"
+  printf '%s' "$payload" > "$(proj_data_dir)/$pname/$field"
+}
+
+@test "proj ls: strips raw ESC from path field (sync-pull attack)" {
+  mkdir -p "$HOME/workspace/evil"
+  proj add evil "$HOME/workspace/evil"
+  # Overwrite path with ESC + clear-screen sequence + OVERWRITE marker
+  local mid; mid="$(machine_id)"
+  printf '\033[2J\033[31mPWNED\033[0m\rOVERWRITE' > "$(proj_data_dir)/evil/path.$mid"
+
+  run proj ls
+  assert_success
+  # The ESC byte (\033 = 0x1B) must not appear anywhere in output.
+  [[ "$output" != *$'\033'* ]] || {
+    echo "output contained raw ESC:"
+    printf '%s' "$output" | od -c | head
+    false
+  }
+  [[ "$output" != *$'\r'* ]]
+}
+
+@test "proj ls: strips raw ESC from host field (remote row)" {
+  run proj add-remote shady user@demo.example.com:/srv/x
+  assert_success
+  # Plant an ESC-laden host AFTER add-remote has passed validation
+  printf 'user@demo.example.com\033[2J' > "$(proj_data_dir)/shady/host"
+
+  run proj ls
+  assert_success
+  [[ "$output" != *$'\033'* ]]
+}
+
+@test "proj ls: strips raw ESC from status field" {
+  mkdir -p "$HOME/workspace/foo"
+  proj add foo "$HOME/workspace/foo"
+  printf 'active\033[31mRED' > "$(proj_data_dir)/foo/status"
+
+  run proj ls
+  assert_success
+  [[ "$output" != *$'\033'* ]]
+}
+
+@test "proj ls -v: strips raw ESC from desc field (per-line)" {
+  mkdir -p "$HOME/workspace/foo"
+  proj add foo "$HOME/workspace/foo"
+  # Multiline desc with ESC on the second line
+  printf 'legit first line\nsecond\033[2Jline\nthird line\n' > "$(proj_data_dir)/foo/desc"
+
+  run proj ls -v
+  assert_success
+  # Verbose legitimately emits its own color codes (`\033[2m` dim etc.);
+  # test can't reject ALL ESC. Assert the attack-specific ESC+CSI sequence
+  # is gone. The literal bracket text [2J that followed the ESC is safe
+  # when the ESC itself is stripped — the terminal renders `[2J` as
+  # four harmless printable characters.
+  [[ "$output" != *$'\033[2J'* ]]
+  # All three desc lines still render; the middle one now carries the
+  # now-harmless literal `[2J` between `second` and `line`.
+  assert_output --partial "legit first line"
+  assert_output --partial "second[2Jline"
+  assert_output --partial "third line"
+}
+
+@test "proj ls -v: strips raw ESC from progress and todo (per-line)" {
+  mkdir -p "$HOME/workspace/foo"
+  proj add foo "$HOME/workspace/foo"
+  printf 'progress line one\nline two\033[2Jpwned\n' > "$(proj_data_dir)/foo/progress"
+  printf 'todo item one\ntodo two\033[31malarm\n' > "$(proj_data_dir)/foo/todo"
+
+  run proj ls -v
+  assert_success
+  [[ "$output" != *$'\033[2J'* ]]
+  [[ "$output" != *$'\033[31m'alarm* ]]
+  assert_output --partial "line two[2Jpwned"
+  assert_output --partial "todo two[31malarm"
+}
+
+@test "proj history: strips raw ESC from log detail" {
+  mkdir -p "$HOME/workspace/foo"
+  proj add foo "$HOME/workspace/foo"
+  # Plant a history entry with ESC in the detail field
+  local ts; ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  printf '%s|edit|desc updated to \033[2Jpwned|\n' "$ts" > "$(proj_data_dir)/foo/history.log"
+
+  run proj history foo
+  assert_success
+  [[ "$output" != *$'\033[2J'* ]]
+  assert_output --partial "desc updated to [2Jpwned"
+}
+
+@test "proj stale: strips raw ESC from planted status field" {
+  mkdir -p "$HOME/workspace/foo"
+  proj add foo "$HOME/workspace/foo"
+  # Make foo look stale (>30 days). Cannot plant ESC inside the timestamp
+  # because _proj_date_to_epoch's strict regex would reject it and the row
+  # would be skipped entirely. Plant an untainted old timestamp, then inject
+  # ESC in the status field which is rendered untouched by _proj_stale.
+  local old_ts
+  old_ts=$(date -v-60d '+%Y-%m-%d %H:%M' 2>/dev/null || date -d '60 days ago' '+%Y-%m-%d %H:%M')
+  printf '%s' "$old_ts" > "$(proj_data_dir)/foo/updated"
+  printf 'active\033[2Jpwned' > "$(proj_data_dir)/foo/status"
+
+  run proj stale
+  assert_success
+  [[ "$output" != *$'\033[2J'* ]]
+  assert_output --partial "foo"
+}
+
+@test "_proj_safe_line strips C0 controls and DEL, keeps printable ASCII + UTF-8" {
+  run zsh -c '
+    source "$1"
+    # C0 range + DEL stripped
+    _proj_safe_line $'\''hello\x01\x02\x1bworld\x7f!'\''
+    echo
+    # UTF-8 (Chinese + emoji) survives
+    _proj_safe_line "中文 😀 test"
+    echo
+  ' _proj_test "$PROJ_ROOT/proj.zsh"
+  assert_success
+  assert_line --index 0 "helloworld!"
+  assert_line --index 1 "中文 😀 test"
+}
