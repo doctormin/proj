@@ -83,10 +83,24 @@ valid_name() {
 # has no business exposing or mutating.
 valid_field() {
   case "$1" in
-    desc|progress|todo|status|type|host|remote_path|updated|tags)
+    desc|progress|todo|status|type|host|remote_path|remote_shell|updated|tags)
       return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# remote_shell has its own allowlist: only characters that proj.zsh's
+# _proj_valid_remote_shell accepts. Rejecting here (before the confirm
+# gate) means a prompt-injected `proj edit foo remote_shell "; evil"`
+# never reaches the delegate_zsh layer.
+valid_remote_shell() {
+  case "$1" in
+    '') return 1 ;;
+  esac
+  if printf '%s' "$1" | grep -Eq '^[[:alnum:][:space:]._/-]+$'; then
+    return 0
+  fi
+  return 1
 }
 
 valid_status() {
@@ -141,7 +155,7 @@ cmd_get() {
     die "usage: proj get <name> <field>"
   fi
   valid_name "$name" || die "invalid project name: $name"
-  valid_field "$field" || die "field not allowed: $field (allowed: desc, progress, todo, status, type, host, remote_path, updated, tags)"
+  valid_field "$field" || die "field not allowed: $field (allowed: desc, progress, todo, status, type, host, remote_path, remote_shell, updated, tags)"
   proj_exists "$name" || die "no such project: $name"
   local f="$PROJ_DATA/$name/$field"
   if [ -f "$f" ]; then
@@ -263,17 +277,24 @@ cmd_edit() {
     die "usage: proj edit <name> <field> <value>"
   fi
   valid_name "$name" || die "invalid project name: $name"
-  valid_field "$field" || die "field not allowed: $field (allowed: desc, progress, todo, status, type, host, remote_path, updated, tags)"
+  valid_field "$field" || die "field not allowed: $field (allowed: desc, progress, todo, status, type, host, remote_path, remote_shell, updated, tags)"
   # Don't let Meta Session rewrite status via `edit` — that's what `status` is
   # for, and it has its own enum gate.
   case "$field" in
     status)  die "use 'proj status <name> <new-status>' to change status" ;;
     tags)    die "use 'proj tag' / 'proj untag' to manage tags" ;;
     updated) die "the updated timestamp is managed automatically, not directly editable" ;;
+    type)    die "the type field is set by add / add-remote; not editable via shim" ;;
   esac
   proj_exists "$name" || die "no such project: $name"
   shift 2
   local value="$*"
+  # remote_shell gets a conservative allowlist check at the shim layer,
+  # mirroring _proj_valid_remote_shell in proj.zsh. Empty is allowed —
+  # it's the explicit "clear" operation routed through to _proj_edit.
+  if [ "$field" = "remote_shell" ] && [ -n "$value" ]; then
+    valid_remote_shell "$value" || die "invalid remote_shell: contains unsafe characters"
+  fi
   # Show a truncated preview so a 10 KB desc doesn't drown the prompt.
   local preview="$value"
   if [ ${#preview} -gt 80 ]; then

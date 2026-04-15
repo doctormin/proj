@@ -83,10 +83,10 @@ _proj_i18n_en() {
     # ── usage ──
     usage_rm           "Usage: proj rm <name>"
     usage_status       "Usage: proj status <name> <active|paused|blocked|done>"
-    usage_edit         "Usage: proj edit <name> <desc|path|progress|todo> <value>"
+    usage_edit         "Usage: proj edit <name> <desc|path|progress|todo|remote_shell> <value>"
     usage_scan         "Usage: proj scan <name>  (or run inside a project directory)"
     status_values      "Status must be: active, paused, blocked, done"
-    field_values       "Field must be: desc, path, progress, todo"
+    field_values       "Field must be: desc, path, progress, todo, remote_shell"
     usage_stale        "Usage: proj stale [days]  (days must be a non-negative integer)"
     no_stale           "No stale projects. Everything is fresh."
     help_stale         "List projects not updated in N days (default 30)"
@@ -165,7 +165,15 @@ Available: %s"
     remote_missing_fields "Remote project '%s' has no host or remote_path. Run: proj edit %s host <user@host>"
     remote_no_ssh      "ssh is not installed. Install OpenSSH or set your system up for remote access."
     remote_cc_connecting "→ Connecting to %s: %s"
-    remote_bad_shell   "Refusing \$PROJ_REMOTE_SHELL with unsafe characters: '%s'"
+    remote_bad_shell   "Refusing remote shell wrapper with unsafe characters: '%s'"
+    remote_shell_detected "  detected remote shell: %s → will use \`%s\`"
+    remote_shell_updated "✓ Remote shell for %s set to: %s"
+    remote_shell_cleared "✓ Remote shell for %s cleared (will fall back to config/default)"
+    cfg_remote_shell   "Remote shell wrapper"
+    cfg_remote_shell_current "Current global remote shell: %s"
+    cfg_remote_shell_unset "No global remote shell configured (default: bash -lc)."
+    cfg_remote_shell_set "✓ Global remote shell set to: %s"
+    cfg_remote_shell_bad "Refusing remote shell with unsafe characters: '%s'"
     filter_unknown     "Unknown filter: %s"
     filter_empty_tag   "Empty tag name in :tag= filter"
     filter_no_match    "No projects match filter: %s"
@@ -283,10 +291,10 @@ _proj_i18n_zh() {
     # ── 用法 ──
     usage_rm           "用法: proj rm <name>"
     usage_status       "用法: proj status <name> <active|paused|blocked|done>"
-    usage_edit         "用法: proj edit <name> <desc|path|progress|todo> <value>"
+    usage_edit         "用法: proj edit <name> <desc|path|progress|todo|remote_shell> <value>"
     usage_scan         "用法: proj scan <name>  (或在项目目录内运行)"
     status_values      "状态必须是: active, paused, blocked, done"
-    field_values       "字段必须是: desc, path, progress, todo"
+    field_values       "字段必须是: desc, path, progress, todo, remote_shell"
     usage_stale        "用法: proj stale [days]  (days 必须是非负整数)"
     no_stale           "没有停滞项目，一切都是新鲜的。"
     help_stale         "列出超过 N 天未更新的项目（默认 30）"
@@ -365,7 +373,15 @@ _proj_i18n_zh() {
     remote_missing_fields "远端项目 '%s' 缺少 host 或 remote_path。运行: proj edit %s host <user@host>"
     remote_no_ssh      "未安装 ssh。请安装 OpenSSH 或检查远端连接配置。"
     remote_cc_connecting "→ 连接 %s: %s"
-    remote_bad_shell   "\$PROJ_REMOTE_SHELL 含有不安全字符，已拒绝: '%s'"
+    remote_bad_shell   "远端 shell 包装含有不安全字符，已拒绝: '%s'"
+    remote_shell_detected "  检测到远端 shell: %s → 将使用 \`%s\`"
+    remote_shell_updated "✓ 已将 %s 的远端 shell 设为: %s"
+    remote_shell_cleared "✓ 已清空 %s 的远端 shell（将回退到全局配置/默认）"
+    cfg_remote_shell   "远端 shell 包装"
+    cfg_remote_shell_current "当前全局远端 shell: %s"
+    cfg_remote_shell_unset "未配置全局远端 shell（默认: bash -lc）。"
+    cfg_remote_shell_set "✓ 全局远端 shell 已设为: %s"
+    cfg_remote_shell_bad "远端 shell 含有不安全字符，已拒绝: '%s'"
     filter_unknown     "未知的过滤关键字: %s"
     filter_empty_tag   ":tag= 后面没有给 tag 名"
     filter_no_match    "没有项目匹配过滤条件: %s"
@@ -992,6 +1008,57 @@ _proj_add_remote() {
 
   echo "${_pc_green}Remote project ${_pc_bold}$name${_pc_reset}${_pc_green} added: ${host}:${rpath}${_pc_reset}"
   echo "${_pc_dim}Use 'proj edit $name desc <description>' to add a description${_pc_reset}"
+
+  # ── Best-effort remote shell auto-detection ──
+  # Pre-flight ssh reads the target user's login $SHELL, then writes the
+  # matching interactive-or-login wrapper to data/<name>/remote_shell so
+  # _proj_ssh_remote_claude picks it up via the resolution chain. Silent
+  # failure — add-remote success does NOT depend on detection.
+  _proj_autodetect_remote_shell "$name" "$host"
+}
+
+# ── _proj_autodetect_remote_shell ──
+# Called from _proj_add_remote after host is written. Runs `ssh <host>
+# 'echo $SHELL'` with strict non-interactive flags (BatchMode=yes means
+# no password prompt, ConnectTimeout=5 caps the wait). If the detected
+# basename is bash/zsh/fish, write the matching wrapper to
+# data/<name>/remote_shell. Anything else → leave the field empty and
+# fall back to global config / default at resolve time.
+_proj_autodetect_remote_shell() {
+  local name="$1" host="$2"
+  # Idempotent: never clobber a pre-existing field. A user who ran
+  # `proj edit foo remote_shell "..."` or restored from sync should not
+  # have their explicit choice overwritten by a second add-remote.
+  local existing; existing=$(_proj_get "$name" remote_shell)
+  if [[ -n "$existing" ]]; then
+    return 0
+  fi
+  if ! (( ${+commands[ssh]} )); then
+    return 0
+  fi
+  local detected
+  detected=$(ssh -o BatchMode=yes -o ConnectTimeout=5 \
+                 -o StrictHostKeyChecking=accept-new \
+                 -- "$host" 'echo $SHELL' 2>/dev/null)
+  # Strip CRs and collapse to first whitespace-delimited token. Windows-
+  # flavoured remotes and tmux wrapper scripts love to emit CRLF.
+  detected="${detected//$'\r'/}"
+  detected="${detected//$'\n'/ }"
+  detected="${detected## }"
+  detected="${detected%% *}"
+  [[ -z "$detected" ]] && return 0
+
+  # basename, case-insensitive match on shell family.
+  local base="${detected##*/}"
+  local wrapper=""
+  case "${(L)base}" in
+    zsh)  wrapper="zsh -ic" ;;
+    bash) wrapper="bash -lc" ;;
+    fish) wrapper="fish -ic" ;;
+    *) return 0 ;;
+  esac
+  _proj_set "$name" "remote_shell" "$wrapper"
+  echo "${_pc_dim}$(_t remote_shell_detected "$base" "$wrapper")${_pc_reset}"
 }
 
 # ── SSH jump for remote projects ──
@@ -1200,6 +1267,25 @@ _proj_edit() {
       _proj_history_append "$name" "edit" "$field"
       echo "${_pc_green}$(_t field_updated "$name" "$field")${_pc_reset}"
       ;;
+    remote_shell)
+      # Explicit clear: `proj edit foo remote_shell ""` deletes the field
+      # so the resolution chain can fall through to global config / default.
+      if [[ -z "$value" ]]; then
+        rm -f -- "$PROJ_DATA/$name/remote_shell"
+        _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
+        _proj_history_append "$name" "edit" "remote_shell(cleared)"
+        echo "${_pc_green}$(_t remote_shell_cleared "$name")${_pc_reset}"
+        return 0
+      fi
+      if ! _proj_valid_remote_shell "$value"; then
+        echo "${_pc_red}$(_t remote_bad_shell "$value")${_pc_reset}"
+        return 1
+      fi
+      _proj_set "$name" "remote_shell" "$value"
+      _proj_set "$name" "updated" "$(date '+%Y-%m-%d %H:%M')"
+      _proj_history_append "$name" "edit" "remote_shell"
+      echo "${_pc_green}$(_t remote_shell_updated "$name" "$value")${_pc_reset}"
+      ;;
     *) echo "${_pc_red}${_i[field_values]}${_pc_reset}"; return 1 ;;
   esac
 }
@@ -1227,6 +1313,40 @@ _proj_config() {
     fi
     _proj_cfg_set sync_repo "$url"
     echo "${_pc_green}Sync repo set to: $url${_pc_reset}"
+    return
+  fi
+
+  # proj config remote_shell [value]
+  # Read: print the current global value (or "unset" message).
+  # Write: validate against _proj_valid_remote_shell, then _proj_cfg_set.
+  # An explicit empty value clears the key.
+  if [[ "$sub" == "remote_shell" || "$sub" == "remote-shell" ]]; then
+    if [[ $# -lt 2 ]]; then
+      local cur_rs; cur_rs=$(_proj_cfg_get remote_shell "")
+      if [[ -n "$cur_rs" ]]; then
+        echo "$(_t cfg_remote_shell_current "$cur_rs")"
+      else
+        echo "${_i[cfg_remote_shell_unset]}"
+      fi
+      return
+    fi
+    local rs_val="$2"
+    if [[ -z "$rs_val" ]]; then
+      # Clear: rewrite config without the key.
+      if [[ -f "$PROJ_CONFIG" ]]; then
+        local tmpf=$(mktemp)
+        grep -v '^remote_shell=' "$PROJ_CONFIG" > "$tmpf" 2>/dev/null || true
+        mv "$tmpf" "$PROJ_CONFIG"
+      fi
+      echo "${_pc_green}${_i[cfg_remote_shell_unset]}${_pc_reset}"
+      return
+    fi
+    if ! _proj_valid_remote_shell "$rs_val"; then
+      echo "${_pc_red}$(_t cfg_remote_shell_bad "$rs_val")${_pc_reset}"
+      return 1
+    fi
+    _proj_cfg_set remote_shell "$rs_val"
+    echo "${_pc_green}$(_t cfg_remote_shell_set "$rs_val")${_pc_reset}"
     return
   fi
 
@@ -1663,6 +1783,46 @@ METAEOF
   claude -c 2>/dev/null || claude
 }
 
+# ── _proj_valid_remote_shell ──
+# Single-source validator for any value that will be interpolated unquoted
+# into the ssh argv as the remote wrapper command. Enforces a conservative
+# allowlist — letters, digits, space, tab, dot, dash, underscore, forward
+# slash — enough to express `bash -lc`, `zsh -ic`, `fish -ic`, or a
+# fully-qualified path like `/usr/bin/env bash -lc`, but nothing that
+# could smuggle in quoting, redirection, or a second command.
+_proj_valid_remote_shell() {
+  local v="$1"
+  [[ -n "$v" ]] || return 1
+  [[ "$v" =~ ^[[:alnum:][:space:]._/-]+$ ]]
+}
+
+# ── _proj_resolve_remote_shell ──
+# Resolution chain for the remote shell wrapper (first non-empty wins):
+#   1. $PROJ_REMOTE_SHELL env var        (escape hatch)
+#   2. data/<name>/remote_shell field    (per-project, auto-detected)
+#   3. ~/.proj/config remote_shell key   (global)
+#   4. bash -lc                          (default)
+# Called from _proj_ssh_remote_claude. The caller is responsible for
+# validating the returned value via _proj_valid_remote_shell before use.
+_proj_resolve_remote_shell() {
+  local name="$1" v
+  if [[ -n "${PROJ_REMOTE_SHELL:-}" ]]; then
+    echo "$PROJ_REMOTE_SHELL"
+    return 0
+  fi
+  v=$(_proj_get "$name" remote_shell 2>/dev/null)
+  if [[ -n "$v" ]]; then
+    echo "$v"
+    return 0
+  fi
+  v=$(_proj_cfg_get remote_shell "")
+  if [[ -n "$v" ]]; then
+    echo "$v"
+    return 0
+  fi
+  echo "bash -lc"
+}
+
 # ── _proj_ssh_remote_claude ──
 # Run `claude -c` on the remote host over ssh -t. Used by _proj_resume_claude
 # when the target project has type=remote. Reuses the current terminal —
@@ -1672,8 +1832,9 @@ METAEOF
 # PATH caveat: most Linux servers add user binaries like ~/.local/bin via
 # ~/.profile, which bash sources on login but zsh does NOT source when
 # invoked as `zsh -lc`. The default `bash -lc` is therefore the most
-# reliable wrapper across standard server configs. Users whose remote box
-# relies on .zshrc can override with PROJ_REMOTE_SHELL="zsh -ic".
+# reliable wrapper across standard server configs. Users on a host whose
+# proxy/API env vars live in .zshrc get zsh -ic auto-detected by
+# proj add-remote. See _proj_resolve_remote_shell for the full chain.
 _proj_ssh_remote_claude() {
   local name="$1"
   local host; host=$(_proj_get "$name" "host")
@@ -1689,13 +1850,14 @@ _proj_ssh_remote_claude() {
     return 1
   fi
 
-  # Validate $PROJ_REMOTE_SHELL against a conservative allowlist. The value
-  # is interpolated unquoted into the ssh argv, so arbitrary quoting would
-  # produce ambiguous parses on the remote side. Letters, digits, space,
-  # tab, dot, dash, underscore, and forward slash are enough to express
-  # `bash -lc`, `zsh -ic`, `/usr/bin/env bash -lc`, etc.
-  local remote_shell="${PROJ_REMOTE_SHELL:-bash -lc}"
-  if [[ ! "$remote_shell" =~ ^[[:alnum:][:space:]._/-]+$ ]]; then
+  # Walk the resolution chain (env > per-project > global config > default)
+  # and validate the winning value through _proj_valid_remote_shell. Any
+  # layer with an unsafe value is refused — this guards against a corrupt
+  # config file or malicious sync payload injecting shell metacharacters
+  # into the unquoted wrapper argument.
+  local remote_shell
+  remote_shell=$(_proj_resolve_remote_shell "$name")
+  if ! _proj_valid_remote_shell "$remote_shell"; then
     echo "${_pc_red}$(_t remote_bad_shell "$remote_shell")${_pc_reset}"
     return 1
   fi

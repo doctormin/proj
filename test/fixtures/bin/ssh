@@ -3,5 +3,21 @@
 # $SSH_CALLS_LOG so tests can assert the command string proj emitted.
 # Exits with $SSH_MOCK_EXIT (default 0) so tests can also cover the
 # connection-failure path.
+#
+# Detection mode (Phase 2e E1 follow-up): proj add-remote pre-flights
+# `ssh <host> 'echo $SHELL'` to auto-detect the remote shell. When argv
+# contains the literal `echo $SHELL`, respond on stdout with
+# $SSH_MOCK_DETECT_SHELL (or empty by default → detection falls through)
+# and exit with $SSH_MOCK_DETECT_EXIT (default 0, so empty-but-success
+# looks like "unknown shell"). Detection calls are ALSO logged so tests
+# can assert detection was attempted.
 echo "ssh $*" >> "${SSH_CALLS_LOG:-/dev/null}"
+for arg in "$@"; do
+  case "$arg" in
+    *'echo $SHELL'*)
+      printf '%s\n' "${SSH_MOCK_DETECT_SHELL:-}"
+      exit "${SSH_MOCK_DETECT_EXIT:-0}"
+      ;;
+  esac
+done
 exit "${SSH_MOCK_EXIT:-0}"
