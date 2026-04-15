@@ -1712,7 +1712,17 @@ _proj_ssh_remote_claude() {
   # both re-parse layers handle correctly. We apply it twice: once around
   # the path inside the bash command, and once around the whole bash
   # command for the outer wrapper shell.
-  local bash_cmd="cd -- ${(qq)rpath} && exec claude -c"
+  #
+  # ── Session detection ──
+  # `claude -c` aborts immediately ("No conversation found to continue") if
+  # the remote ~/.claude/projects/<encoded-cwd>/ has no prior session — the
+  # exact case for a freshly added remote project. Mirror the local branch
+  # in _proj_resume_claude: probe the encoded session dir on the remote and
+  # exec `claude -c` only if a *.jsonl session file exists, otherwise fall
+  # back to a fresh `claude`. Path encoding matches Claude's convention of
+  # replacing '/' with '-' (see _proj_path_to_claude_dir).
+  local rq=${(qq)rpath}
+  local bash_cmd="cd -- ${rq} && _sess=\$HOME/.claude/projects/\$(printf %s ${rq} | tr / -) && if [ -d \"\$_sess\" ] && ls \"\$_sess\"/*.jsonl >/dev/null 2>&1; then exec claude -c; else exec claude; fi"
   local full_cmd="${remote_shell} ${(qq)bash_cmd}"
 
   # `--` before $host prevents a host value that accidentally begins with

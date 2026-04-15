@@ -73,6 +73,28 @@ _add_remote_project() {
   [[ "$(cat "$SSH_CALLS_LOG")" == *"exec claude -c"* ]] || false
 }
 
+@test "proj cc <remote>: probes session dir and falls back to fresh claude" {
+  # Regression: the original implementation hard-coded `exec claude -c`,
+  # which aborts immediately on a freshly added remote project because no
+  # ~/.claude/projects/<encoded-cwd>/ session exists yet ("No conversation
+  # found to continue"). The remote command must mirror the local
+  # _proj_resume_claude branch: probe the encoded session dir and exec
+  # `claude -c` only when a *.jsonl session file exists, else exec a
+  # fresh `claude`.
+  setup_cc
+  _add_remote_project srv-a user@ai4s /srv/proj
+  run proj cc srv-a
+  assert_success
+  local logged; logged="$(cat "$SSH_CALLS_LOG")"
+  # Probe construction
+  [[ "$logged" == *".claude/projects/"* ]] || false
+  [[ "$logged" == *"tr / -"* ]] || false
+  [[ "$logged" == *"*.jsonl"* ]] || false
+  # Both branches present
+  [[ "$logged" == *"exec claude -c"* ]] || false
+  [[ "$logged" == *"else exec claude"* ]] || false
+}
+
 @test "proj cc <remote>: escapes remote_path containing spaces" {
   setup_cc
   _add_remote_project srv-a user@ai4s "/srv/my project"
