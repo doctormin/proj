@@ -124,3 +124,32 @@ load '../test_helper'
   assert_success
   assert_output --partial "myapp"
 }
+
+@test "proj list shows host:remote_path for remote projects (B3)" {
+  # Regression: before B3, _proj_list read only the `path` field for every
+  # row, so remote projects (whose `path` is empty on this machine) rendered
+  # as a dangling `→` with nothing after it. Should now show host:remote_path
+  # the same way preview.sh renders it.
+  run proj add-remote api-server user@server.example.com:/srv/api
+  assert_success
+
+  run proj list
+  assert_success
+  assert_output --partial "api-server"
+  assert_output --partial "user@server.example.com:/srv/api"
+  # The dangling arrow case must not surface: no line that is just "→ "
+  # with only whitespace after. Looking for the specific broken form.
+  refute_output --regexp '→ $'
+}
+
+@test "proj list still shows the local path for type=local projects" {
+  # Sanity: the B3 fix must not regress the local rendering path.
+  mkdir -p "$HOME/workspace/localapp"
+  run proj add localapp "$HOME/workspace/localapp"
+  assert_success
+
+  run proj list
+  assert_success
+  assert_output --partial "localapp"
+  assert_output --partial "$HOME/workspace/localapp"
+}

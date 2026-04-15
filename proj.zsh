@@ -2645,17 +2645,34 @@ _proj_list() {
   fi
 
   echo ""
+  # All loop-scoped locals declared once at the top (gotcha #11 — re-declaring
+  # `local` inside the loop body echoes the prior binding to stdout).
   local i=1 st="" projpath="" desc="" updated="" progress="" todo="" color="" icon=""
+  local ptype="" host="" rpath="" display=""
   for name in "${names[@]}"; do
     st=$(_proj_get "$name" "status")
     [[ "$filter" == "active" && "$st" == "done" ]] && continue
     [[ "$filter" == "done" && "$st" != "done" ]] && continue
 
+    ptype=$(_proj_get "$name" "type")
     projpath=$(_proj_get "$name" "path")
     desc=$(_proj_get "$name" "desc")
     updated=$(_proj_get "$name" "updated")
     progress=$(_proj_get "$name" "progress")
     todo=$(_proj_get "$name" "todo")
+
+    # Remote projects have no local path on this machine; show host:remote_path
+    # so the arrow isn't a dangling placeholder. preview.sh already renders
+    # remote projects this way (see preview.sh ~line 94); this aligns `proj ls`
+    # with the interactive panel. B3 fix.
+    display="$projpath"
+    if [[ "$ptype" == "remote" ]]; then
+      host=$(_proj_get "$name" "host")
+      rpath=$(_proj_get "$name" "remote_path")
+      if [[ -n "$host" || -n "$rpath" ]]; then
+        display="${host}:${rpath}"
+      fi
+    fi
 
     color="" icon=""
     case "$st" in
@@ -2671,7 +2688,7 @@ _proj_list() {
     [[ -n "$updated" ]] && printf "  ${_pc_dim}$(_t last_updated "$updated")${_pc_reset}"
     echo ""
     [[ -n "$desc" ]] && echo "      ${_pc_dim}$desc${_pc_reset}"
-    echo "      ${_pc_dim}→ $projpath${_pc_reset}"
+    echo "      ${_pc_dim}→ $display${_pc_reset}"
 
     if [[ -n "$progress" ]]; then
       echo "      ${_pc_cyan}${_i[progress]}:${_pc_reset}"
