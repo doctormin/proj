@@ -70,6 +70,14 @@ _proj_i18n_en() {
     scanning           "Scanning project with Claude..."
     rescanning         "Rescanning %s with Claude..."
     scan_failed        "Claude scan failed. Edit manually:"
+    scan_warn_large    "⚠ %s files in this directory. Scanning will let Claude read a lot of content and may consume significant tokens."
+    scan_warn_untyped  "⚠ %s does not look like a development project (no .git / package.json / Cargo.toml / etc). %s files."
+    scan_confirm_prompt "Continue scanning? [y/N]"
+    scan_skipped_user  "  Skipped scan. Run 'proj scan %s' to scan manually."
+    scan_skipped_flag  "  Skipped scan (--no-scan). Run 'proj scan %s' later."
+    scan_refused_huge  "✗ Skipping scan: %s files exceeds the auto-scan threshold.\n  → Force scan: proj scan %s --force"
+    scan_force_huge    "  Forcing scan of %s files (--force-scan)."
+    scan_no_scan_with_scan "--no-scan is meaningless with 'proj scan'. Use 'proj add --no-scan' to register without scanning."
     proj_not_exist     "Project '%s' does not exist."
     proj_removed       "✓ Removed project: %s"
     tombstone_recorded "  (tombstone recorded for '%s' — deletion will sync to other machines)"
@@ -281,6 +289,14 @@ _proj_i18n_zh() {
     scanning           "正在让 Claude 分析项目进展..."
     rescanning         "正在让 Claude 重新分析 %s ..."
     scan_failed        "Claude 分析未成功，你可以手动编辑:"
+    scan_warn_large    "⚠ 该目录有 %s 个文件，扫描会让 Claude 读取大量内容，可能消耗显著 token。"
+    scan_warn_untyped  "⚠ %s 看起来不像开发项目（未发现 .git / package.json / Cargo.toml 等标记文件），共 %s 个文件。"
+    scan_confirm_prompt "继续扫描？[y/N]"
+    scan_skipped_user  "  已跳过扫描。运行 'proj scan %s' 可手动触发。"
+    scan_skipped_flag  "  已跳过扫描（--no-scan）。稍后可用 'proj scan %s' 触发。"
+    scan_refused_huge  "✗ 跳过扫描：%s 个文件，超过自动扫描阈值。\n  → 强制扫描请运行: proj scan %s --force"
+    scan_force_huge    "  强制扫描 %s 个文件（--force-scan）。"
+    scan_no_scan_with_scan "--no-scan 与 'proj scan' 冲突。请使用 'proj add --no-scan' 注册项目而不扫描。"
     proj_not_exist     "项目 '%s' 不存在。"
     proj_removed       "✓ 已移除项目: %s"
     tombstone_recorded "  (已为 '%s' 记录 tombstone —— 下次 sync 会传播删除)"
@@ -629,6 +645,191 @@ _proj_safe_line() {
   printf '%s' "$1" | LC_ALL=C tr -d '\000-\037\177' 2>/dev/null
 }
 
+# ── Scan size assessment (token-burn protection) ──
+#
+# `proj add` runs `claude -p <scan-prompt>` in the project directory, and
+# Claude itself decides what to read. With no upper bound, accidentally
+# adding a giant directory (a node_modules-laden checkout, a Downloads
+# folder, a 100k-file monorepo, or a typo'd path that lands on /) can
+# burn an enormous amount of tokens before the user notices. These two
+# helpers gate the scan: detect dev-project markers and count files,
+# then let _proj_add and _proj_scan decide whether to scan, prompt, or
+# refuse.
+#
+# Returns 0 if any well-known dev-project marker exists at the top level
+# of $1, else 1. Markers cover the major ecosystems (Python, JS/TS,
+# Ruby, Rust, Go, Java/Kotlin, C/C++, Elixir, .NET, Swift, PHP, Nim,
+# Haskell, Crystal, Scala, Clojure, OCaml, R, Lua, Perl, Docker) plus
+# universal signals (.git, README*, Dockerfile). Top-level only — we
+# don't recurse, both for speed and because nested markers (e.g. a
+# package.json deep inside node_modules) don't actually identify the
+# enclosing dir as a project root.
+_proj_dev_markers() {
+  local p="$1"
+  [[ -d "$p" ]] || return 1
+  local m
+  for m in \
+    .git \
+    package.json package-lock.json yarn.lock pnpm-lock.yaml bun.lockb \
+    tsconfig.json deno.json deno.jsonc jsr.json \
+    pyproject.toml setup.py setup.cfg Pipfile Pipfile.lock requirements.txt \
+    poetry.lock tox.ini conda.yaml environment.yml \
+    Cargo.toml Cargo.lock \
+    go.mod go.sum \
+    Gemfile Gemfile.lock Rakefile \
+    pom.xml build.gradle build.gradle.kts settings.gradle settings.gradle.kts \
+    gradle.properties mvnw gradlew \
+    composer.json composer.lock \
+    Makefile makefile GNUmakefile CMakeLists.txt configure configure.ac \
+    meson.build BUILD BUILD.bazel WORKSPACE WORKSPACE.bazel \
+    mix.exs mix.lock rebar.config \
+    Package.swift Podfile Cartfile \
+    project.json global.json \
+    Makefile.PL Build.PL cpanfile \
+    stack.yaml \
+    build.sbt \
+    project.clj deps.edn shadow-cljs.edn \
+    shard.yml \
+    dune-project \
+    DESCRIPTION \
+    Dockerfile docker-compose.yml docker-compose.yaml compose.yml compose.yaml \
+    .editorconfig .gitignore \
+    README README.md README.rst README.txt README.markdown
+  do
+    [[ -e "$p/$m" ]] && return 0
+  done
+  # Glob-based markers — extensions that mark a dev project but live under
+  # any name. Use zsh (N) qualifier so an empty match returns no entries
+  # without erroring.
+  local -a globbed
+  globbed=( "$p"/*.csproj(N) "$p"/*.fsproj(N) "$p"/*.vbproj(N) \
+            "$p"/*.sln(N) "$p"/*.gemspec(N) "$p"/*.cabal(N) \
+            "$p"/*.nimble(N) "$p"/*.xcodeproj(N) "$p"/*.xcworkspace(N) \
+            "$p"/*.rockspec(N) )
+  (( ${#globbed[@]} > 0 )) && return 0
+  return 1
+}
+
+# Assess scan risk for a directory. Echoes "<verdict>|<file_count>"
+# where verdict is one of:
+#
+#   safe          — small enough OR clearly a real dev project; scan freely
+#   needs-confirm — medium-sized, no clear dev markers; prompt the user
+#   huge          — too big to auto-scan; refuse unless user explicitly forces
+#
+# Conservative thresholds (most users have limited token budgets):
+#
+#   < 500 files                            → safe (small enough to never matter)
+#   500..9999 files AND has dev markers    → safe (real-looking dev project)
+#   500..9999 files AND no dev markers     → needs-confirm
+#   >= 10000 files                         → huge (refuse without --force-scan)
+#
+# Both thresholds are tunable via env var so tests can exercise the
+# branches without creating thousands of files, and so power users can
+# tighten or relax the gate to taste:
+#
+#   PROJ_SCAN_PROMPT_THRESHOLD   default 500    — below this, always safe
+#   PROJ_SCAN_HUGE_THRESHOLD     default 10000  — at or above this, huge
+#
+# Counting strategy:
+#   - If .git/ exists, use `git ls-files | wc -l` (fast and accurate, only
+#     counts tracked files which is the right denominator for a scan).
+#   - Otherwise, `find -type f` with a head cap so the count short-circuits
+#     on truly enormous trees instead of walking all of /tmp. The cap is
+#     the huge threshold + 1 so the find cost stays bounded.
+#     Hidden directories are excluded to avoid counting `.cache` etc.
+_proj_assess_scan_size() {
+  local p="$1"
+  [[ -d "$p" ]] || { echo "safe|0"; return 0; }
+  local prompt_t="${PROJ_SCAN_PROMPT_THRESHOLD:-500}"
+  local huge_t="${PROJ_SCAN_HUGE_THRESHOLD:-10000}"
+  # Sanity-fall-back if env var is non-numeric.
+  [[ "$prompt_t" =~ ^[0-9]+$ ]] || prompt_t=500
+  [[ "$huge_t" =~ ^[0-9]+$ ]] || huge_t=10000
+
+  local count=0
+  if [[ -d "$p/.git" ]] && (( ${+commands[git]} )); then
+    count=$(cd "$p" && git ls-files 2>/dev/null | wc -l | tr -d ' ')
+  else
+    count=$(find "$p" -type f -not -path '*/.*' 2>/dev/null | head -n $((huge_t + 1)) | wc -l | tr -d ' ')
+  fi
+  [[ -z "$count" || ! "$count" =~ ^[0-9]+$ ]] && count=0
+
+  local verdict
+  if (( count >= huge_t )); then
+    verdict="huge"
+  elif (( count < prompt_t )); then
+    verdict="safe"
+  elif _proj_dev_markers "$p"; then
+    verdict="safe"
+  else
+    verdict="needs-confirm"
+  fi
+  echo "${verdict}|${count}"
+}
+
+# Decide whether to scan, prompt, or refuse — and act on the decision.
+# Args: <name> <projpath> [<flags>]  where <flags> is a colon-separated
+# string from the parser: "no_scan", "yes", "force_scan", or empty.
+#
+# This wraps _proj_scan_with_claude with the size assessment + interactive
+# confirmation. Both _proj_add and _proj_scan call this so the gate
+# behaves identically on the auto-scan-after-add path and the manual
+# `proj scan` path.
+_proj_scan_gated() {
+  local name="$1" projpath="$2" flags="${3:-}"
+  local no_scan=0 yes=0 force_scan=0
+  case ":$flags:" in *:no_scan:*) no_scan=1 ;; esac
+  case ":$flags:" in *:yes:*) yes=1 ;; esac
+  case ":$flags:" in *:force_scan:*) force_scan=1 ;; esac
+
+  if (( no_scan )); then
+    echo "${_pc_dim}$(_t scan_skipped_flag "$name")${_pc_reset}"
+    return 0
+  fi
+
+  local assessment verdict count
+  assessment=$(_proj_assess_scan_size "$projpath")
+  verdict="${assessment%%|*}"
+  count="${assessment#*|}"
+
+  case "$verdict" in
+    safe)
+      _proj_scan_with_claude "$name"
+      ;;
+    needs-confirm)
+      if (( yes || force_scan )); then
+        _proj_scan_with_claude "$name"
+        return $?
+      fi
+      local has_markers=0
+      _proj_dev_markers "$projpath" && has_markers=1
+      echo ""
+      if (( has_markers )); then
+        echo "${_pc_yellow}$(_t scan_warn_large "$count")${_pc_reset}"
+      else
+        echo "${_pc_yellow}$(_t scan_warn_untyped "$projpath" "$count")${_pc_reset}"
+      fi
+      printf "${_pc_yellow}$(_t scan_confirm_prompt)${_pc_reset} "
+      local ans=""
+      read -r ans 2>/dev/null || ans=""
+      if [[ "$ans" =~ ^[Yy]$ ]]; then
+        _proj_scan_with_claude "$name"
+      else
+        echo "${_pc_dim}$(_t scan_skipped_user "$name")${_pc_reset}"
+      fi
+      ;;
+    huge)
+      if (( force_scan )); then
+        echo "${_pc_yellow}$(_t scan_force_huge "$count")${_pc_reset}"
+        _proj_scan_with_claude "$name"
+      else
+        echo "${_pc_yellow}$(_t scan_refused_huge "$count" "$name")${_pc_reset}"
+      fi
+      ;;
+  esac
+}
+
 # Returns 0 if $1 looks like a git-clonable URL (https://, git://, ssh://,
 # file://, or the scp-like user@host:path form). Used by _proj_add to
 # dispatch URL inputs to the clone path instead of the local-directory
@@ -642,14 +843,35 @@ _proj_is_git_url() {
 
 # ── proj add ──
 _proj_add() {
-  local name="$1"
-  local projpath="${2:-$(pwd)}"
+  # Parse flags. `proj add` historically takes positional `<name> [path]`;
+  # we add three flags that gate the post-add Claude scan to protect
+  # against runaway token spend on accidentally-huge directories. Flags
+  # and positional args may interleave.
+  #
+  #   --no-scan      register only, never invoke Claude
+  #   -y / --yes     auto-confirm the medium-size scan prompt
+  #   --force-scan   bypass the huge-directory refusal (escape hatch)
+  local -a positional=()
+  local -a scan_flags=()
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --no-scan)    scan_flags+=("no_scan") ;;
+      -y|--yes)     scan_flags+=("yes") ;;
+      --force-scan) scan_flags+=("force_scan") ;;
+      --) ;;
+      *) positional+=("$arg") ;;
+    esac
+  done
+  local name="${positional[1]:-}"
+  local projpath="${positional[2]:-$(pwd)}"
+  local flags_str="${(j.:.)scan_flags}"
 
   # If the first argument looks like a git URL, dispatch to the clone path.
   # Must happen before any of the "name" normalization below so that URLs
   # never get mistaken for a project name.
   if [[ -n "$name" ]] && _proj_is_git_url "$name"; then
-    _proj_github_clone "$name" "$2"
+    _proj_github_clone "$name" "${positional[2]:-}"
     return $?
   fi
 
@@ -697,9 +919,12 @@ _proj_add() {
   fi
 
   echo "${_pc_green}$(_t proj_added "${_pc_bold}$name${_pc_reset}${_pc_green}" "$projpath")${_pc_reset}"
-  echo ""
-  echo "${_pc_cyan}${_i[scanning]}${_pc_reset}"
-  _proj_scan_with_claude "$name"
+
+  # Gate the scan on size + dev-marker assessment. Scan-skipping flags
+  # (--no-scan / -y / --force-scan) come from the parser at the top.
+  # A separate "Scanning..." line is emitted by _proj_scan_gated only if
+  # the assessment actually proceeds to call _proj_scan_with_claude.
+  _proj_scan_gated "$name" "$projpath" "$flags_str"
 }
 
 # ── proj add <git-url> clone helper ──
@@ -1140,6 +1365,9 @@ _proj_scan_with_claude() {
     return 1
   fi
 
+  echo ""
+  echo "${_pc_cyan}${_i[scanning]}${_pc_reset}"
+
   local result
   result=$(cd "$projpath" && claude -p "${_i[scan_prompt]}" 2>/dev/null)
 
@@ -1191,7 +1419,27 @@ _proj_scan_with_claude() {
 
 # ── proj scan ──
 _proj_scan() {
-  local name="$1"
+  # `proj scan [<name>] [-y] [--force-scan]` — share the same scan-gate
+  # flags as `proj add` so a manual rescan can still bypass the medium /
+  # huge prompts when the user knows what they're doing. `--no-scan` is
+  # nonsensical here (the whole command IS the scan) and rejected.
+  local -a positional=()
+  local -a scan_flags=()
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -y|--yes)     scan_flags+=("yes") ;;
+      --force-scan|--force) scan_flags+=("force_scan") ;;
+      --no-scan)
+        echo "${_pc_red}$(_t scan_no_scan_with_scan)${_pc_reset}"
+        return 1
+        ;;
+      --) ;;
+      *) positional+=("$arg") ;;
+    esac
+  done
+  local name="${positional[1]:-}"
+
   if [[ -z "$name" ]]; then
     local cwd=$(pwd)
     for n in $(_proj_names); do
@@ -1208,8 +1456,10 @@ _proj_scan() {
     echo "${_pc_red}$(_t proj_not_exist "$name")${_pc_reset}"
     return 1
   fi
+  local projpath; projpath=$(_proj_get "$name" "path")
   echo "${_pc_cyan}$(_t rescanning "$name")${_pc_reset}"
-  _proj_scan_with_claude "$name"
+  local flags_str="${(j.:.)scan_flags}"
+  _proj_scan_gated "$name" "$projpath" "$flags_str"
 }
 
 # ── proj rm ──
