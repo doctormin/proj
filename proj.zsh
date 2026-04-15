@@ -491,7 +491,11 @@ _proj_names() {
   # a leading colon (which would collide with the `:filter` router) never
   # surface into the panel or batch dispatch. Defense in depth against
   # name-based injection into `${=target}` / fzf's `{+1}` placeholder.
-  ls "$PROJ_DATA" 2>/dev/null | grep -E '^[a-zA-Z0-9][a-zA-Z0-9._-]*$' || true
+  # `command ls` bypasses any user-defined `ls` alias/function (e.g.
+  # `alias ls=eza --icons --color=always`) — without it the alias gets
+  # baked into this function at source time and the ANSI/icon prefixes
+  # break the basename regex, returning an empty list of projects.
+  command ls "$PROJ_DATA" 2>/dev/null | grep -E '^[a-zA-Z0-9][a-zA-Z0-9._-]*$' || true
 }
 
 _proj_get() {
@@ -550,7 +554,7 @@ _proj_migrate() {
   local n=""
 
   # Check if there are any projects to migrate
-  for n in $(ls "$PROJ_DATA" 2>/dev/null | grep -v '^\.' ); do
+  for n in $(command ls "$PROJ_DATA" 2>/dev/null | grep -v '^\.' ); do
     [[ -f "$PROJ_DATA/$n/path" ]] && names+=("$n")
   done
 
@@ -754,7 +758,7 @@ _proj_github_clone() {
       echo "${_pc_yellow}$(_t clone_already_present "$target")${_pc_reset}"
     else
       # Exists but not a git repo — refuse unless empty.
-      if [[ -n "$(ls -A "$target" 2>/dev/null)" ]]; then
+      if [[ -n "$(command ls -A "$target" 2>/dev/null)" ]]; then
         echo "${_pc_red}$(_t clone_target_not_empty "$target")${_pc_reset}"
         return 1
       fi
@@ -809,7 +813,7 @@ _proj_new() {
   if [[ ! -d "$src" ]]; then
     local available=""
     if [[ -d "$tpl_root" ]]; then
-      available=$(ls -1 "$tpl_root" 2>/dev/null | tr '\n' ' ')
+      available=$(command ls -1 "$tpl_root" 2>/dev/null | tr '\n' ' ')
     fi
     [[ -z "$available" ]] && available="(none)"
     echo "${_pc_red}$(_t new_template_not_found "$template" "$available")${_pc_reset}"
@@ -1479,7 +1483,7 @@ _proj_sync() {
       echo "${_pc_dim}Local backup at: $backup_dir${_pc_reset}"
     else
       # Mode 1: First machine — init + push
-      local count=$(ls "$PROJ_DATA" 2>/dev/null | grep -v '^\.' | wc -l | tr -d ' ')
+      local count=$(command ls "$PROJ_DATA" 2>/dev/null | grep -v '^\.' | wc -l | tr -d ' ')
       echo ""
       echo "${_pc_yellow}About to push $count project(s) to: $repo${_pc_reset}"
       echo "${_pc_yellow}Make sure this repository is PRIVATE to avoid leaking project info.${_pc_reset}"
