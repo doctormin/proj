@@ -213,7 +213,8 @@ Available: %s"
     help_scan          "Rescan project progress with Claude"
     help_status        "Change project status"
     help_edit          "Edit project field"
-    help_list          "Static list mode"
+    help_list          "List projects (one line each; -v for full details)"
+    list_bad_arg       "Unknown argument for proj ls: '%s' (expected -v/--verbose or all/active/done)"
     help_hotkeys       "Interactive panel hotkeys:"
     help_key_enter     "Jump to project directory"
     help_key_ce        "Resume Claude Code session"
@@ -423,7 +424,8 @@ _proj_i18n_zh() {
     help_scan          "让 Claude 重新分析项目进展"
     help_status        "修改项目状态"
     help_edit          "编辑项目字段"
-    help_list          "静态列表模式"
+    help_list          "列出项目（默认一行一个；-v 查看完整详情）"
+    list_bad_arg       "proj ls 无法识别的参数: '%s' (应为 -v/--verbose 或 all/active/done)"
     help_hotkeys       "交互面板快捷键:"
     help_key_enter     "跳转到项目目录"
     help_key_ce        "恢复该项目的 Claude Code 会话"
@@ -2601,7 +2603,7 @@ proj() {
       echo "  ${_pc_cyan}proj scan [name]${_pc_reset}             ${_i[help_scan]}"
       echo "  ${_pc_cyan}proj status <name> <...>${_pc_reset}     ${_i[help_status]}"
       echo "  ${_pc_cyan}proj edit <name> <field> <val>${_pc_reset}  ${_i[help_edit]}"
-      echo "  ${_pc_cyan}proj list [active|done]${_pc_reset}       ${_i[help_list]}"
+      echo "  ${_pc_cyan}proj list [-v] [active|done]${_pc_reset}  ${_i[help_list]}"
       echo "  ${_pc_cyan}proj stale [days]${_pc_reset}            ${_i[help_stale]}"
       echo "  ${_pc_cyan}proj import [dir|file.json|zoxide]${_pc_reset}  ${_i[help_import]}"
       echo "  ${_pc_cyan}proj export [file]${_pc_reset}           ${_i[help_export]}"
@@ -2636,6 +2638,162 @@ proj() {
 
 # ── proj list (静态列表) ──
 _proj_list() {
+  # Parse args. Flag (-v/--verbose) and filter (all|active|done) are
+  # order-independent, so `proj ls -v active` ≡ `proj ls active -v`.
+  local verbose=0
+  local filter="all"
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -v|--verbose) verbose=1 ;;
+      all|active|done) filter="$arg" ;;
+      *)
+        echo "${_pc_red}$(_t list_bad_arg "$arg")${_pc_reset}" >&2
+        return 1
+        ;;
+    esac
+  done
+
+  if (( verbose )); then
+    _proj_list_verbose "$filter"
+  else
+    _proj_list_compact "$filter"
+  fi
+}
+
+# Compact one-line-per-project renderer (default for `proj ls`).
+# Columns: index / status icon / name / status word / relative time / path.
+# Never wraps: path is truncated to terminal width on a tty, left full when
+# piped so downstream grep/awk/less get the real data.
+_proj_list_compact() {
+  local filter="${1:-all}"
+  local names=($(_proj_names))
+
+  if [[ ${#names[@]} -eq 0 ]]; then
+    echo "${_pc_dim}${_i[no_projects]}${_pc_reset}"
+    return
+  fi
+
+  # tty? If stdout is piped, drop colors and disable width truncation.
+  local is_tty=0
+  [[ -t 1 ]] && is_tty=1
+
+  # Width detection. Fall back to 100 when tput fails (piped output gets
+  # full data anyway; this is only used when is_tty=1).
+  local cols=100
+  if (( is_tty )); then
+    if [[ -n "${COLUMNS:-}" ]]; then
+      cols=$COLUMNS
+    else
+      local tc
+      tc=$(tput cols 2>/dev/null) && [[ -n "$tc" ]] && cols=$tc
+    fi
+  fi
+  local narrow=0
+  (( is_tty && cols < 60 )) && narrow=1
+
+  local now_epoch
+  now_epoch=$(date +%s)
+
+  echo ""
+  # All loop-scoped locals declared once at the top (gotcha #11).
+  local i=1 st="" projpath="" updated="" color="" icon=""
+  local ptype="" host="" rpath="" display="" rel="" delta="" ep=""
+  local row_prefix="" row_tail="" visible_prefix_len=0 max_path_len=0
+  local c_dim="" c_reset="" c_bold="" c_color=""
+  for name in "${names[@]}"; do
+    st=$(_proj_get "$name" "status")
+    [[ "$filter" == "active" && "$st" == "done" ]] && continue
+    [[ "$filter" == "done" && "$st" != "done" ]] && continue
+
+    ptype=$(_proj_get "$name" "type")
+    projpath=$(_proj_get "$name" "path")
+    updated=$(_proj_get "$name" "updated")
+
+    # Remote projects: show host:remote_path (mirrors verbose mode + preview.sh).
+    display="$projpath"
+    if [[ "$ptype" == "remote" ]]; then
+      host=$(_proj_get "$name" "host")
+      rpath=$(_proj_get "$name" "remote_path")
+      if [[ -n "$host" || -n "$rpath" ]]; then
+        display="${host}:${rpath}"
+      fi
+    fi
+    # Empty path on a local project (shouldn't happen, but don't render a
+    # bare arrow). Also covers remote with neither host nor remote_path set.
+    if [[ -z "$display" ]]; then
+      display="(no path)"
+    fi
+    # $HOME → ~ substitution only when rendering to a tty. Piped output
+    # keeps absolute paths so consumers don't have to re-expand.
+    if (( is_tty )); then
+      display="${display/#$HOME/~}"
+    fi
+
+    # Relative time from `updated` (YYYY-MM-DD HH:MM). Empty or
+    # unparseable → "unknown".
+    rel="unknown"
+    if [[ -n "$updated" ]]; then
+      if ep=$(_proj_date_to_epoch "$updated" 2>/dev/null) && [[ -n "$ep" ]]; then
+        delta=$((now_epoch - ep))
+        (( delta < 0 )) && delta=0
+        rel=$(_proj_relative_time "$delta")
+      fi
+    fi
+
+    color="" icon=""
+    case "$st" in
+      active)   color="$_pc_green";  icon="●" ;;
+      paused)   color="$_pc_yellow"; icon="◐" ;;
+      blocked)  color="$_pc_red";    icon="■" ;;
+      done)     color="$_pc_dim";    icon="✓" ;;
+      *)        color="$_pc_cyan";   icon="○" ;;
+    esac
+
+    # Strip colors when not a tty.
+    if (( is_tty )); then
+      c_dim="$_pc_dim"; c_reset="$_pc_reset"; c_bold="$_pc_bold"; c_color="$color"
+    else
+      c_dim=""; c_reset=""; c_bold=""; c_color=""
+    fi
+
+    # Build the row. Columns:
+    #   index (2w, dim) / icon+space (2w) / name (16w, bold) /
+    #   status (8w) / rel-time (8w, dim) / path (rest, dim, truncated on tty)
+    if (( narrow )); then
+      # <60 cols: drop rel-time column to save width.
+      row_prefix=$(printf "  ${c_dim}%2d${c_reset}  ${c_color}%s${c_reset} ${c_bold}%-16s${c_reset}  ${c_color}%-8s${c_reset}  " \
+        "$i" "$icon" "$name" "$st")
+      visible_prefix_len=$((2 + 2 + 2 + 2 + 16 + 2 + 8 + 2))
+    else
+      row_prefix=$(printf "  ${c_dim}%2d${c_reset}  ${c_color}%s${c_reset} ${c_bold}%-16s${c_reset}  ${c_color}%-8s${c_reset}  ${c_dim}%-8s${c_reset}  " \
+        "$i" "$icon" "$name" "$st" "$rel")
+      visible_prefix_len=$((2 + 2 + 2 + 2 + 16 + 2 + 8 + 2 + 8 + 2))
+    fi
+
+    # Truncate display only when writing to a tty AND the remaining column
+    # would overflow. Naive char count (no CJK width awareness — out of scope).
+    if (( is_tty )); then
+      max_path_len=$((cols - visible_prefix_len))
+      if (( max_path_len < 10 )); then
+        max_path_len=10
+      fi
+      if (( ${#display} > max_path_len )); then
+        display="${display:0:$((max_path_len - 1))}…"
+      fi
+    fi
+
+    printf "%s${c_dim}%s${c_reset}\n" "$row_prefix" "$display"
+    ((i++))
+  done
+  echo ""
+}
+
+# Full briefing renderer (`proj ls -v` / `--verbose`). This is the historical
+# output format — name, status, updated, desc, path, progress (≤3 lines),
+# TODO (≤3 lines), blank. Kept verbatim so existing users and scripts that
+# opt into verbose still see what they expect.
+_proj_list_verbose() {
   local filter="${1:-all}"
   local names=($(_proj_names))
 
@@ -4009,8 +4167,8 @@ _proj_completion() {
         _describe 'project' projects
         ;;
       list|ls)
-        local -a filters=(all active done)
-        _describe 'filter' filters
+        local -a filters=(all active done -v --verbose)
+        _describe 'filter/flag' filters
         ;;
       config|cfg)
         local -a cfgkeys=(lang)
