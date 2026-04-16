@@ -2918,11 +2918,19 @@ _proj_list() {
   # order-independent, so `proj ls -v active` ≡ `proj ls active -v`.
   local verbose=0
   local filter="all"
+  local filter_set=0
   local arg
   for arg in "$@"; do
     case "$arg" in
       -v|--verbose) verbose=1 ;;
-      all|active|done) filter="$arg" ;;
+      all|active|done)
+        if (( filter_set )); then
+          echo "${_pc_red}$(_t list_bad_arg "$arg")${_pc_reset}" >&2
+          return 1
+        fi
+        filter="$arg"
+        filter_set=1
+        ;;
       *)
         echo "${_pc_red}$(_t list_bad_arg "$arg")${_pc_reset}" >&2
         return 1
@@ -2958,11 +2966,11 @@ _proj_list_compact() {
   # full data anyway; this is only used when is_tty=1).
   local cols=100
   if (( is_tty )); then
-    if [[ -n "${COLUMNS:-}" ]]; then
+    if [[ -n "${COLUMNS:-}" && "${COLUMNS:-}" =~ ^[0-9]+$ ]]; then
       cols=$COLUMNS
     else
       local tc
-      tc=$(tput cols 2>/dev/null) && [[ -n "$tc" ]] && cols=$tc
+      tc=$(tput cols 2>/dev/null) && [[ "$tc" =~ ^[0-9]+$ ]] && cols=$tc
     fi
   fi
   local narrow=0
@@ -2973,9 +2981,9 @@ _proj_list_compact() {
 
   echo ""
   # All loop-scoped locals declared once at the top (gotcha #11).
-  local i=1 st="" projpath="" updated="" color="" icon=""
+  local name="" dname="" i=1 st="" projpath="" updated="" color="" icon=""
   local ptype="" host="" rpath="" display="" rel="" delta="" ep=""
-  local row_prefix="" row_tail="" visible_prefix_len=0 max_path_len=0
+  local row_prefix="" visible_prefix_len=0 max_path_len=0
   local c_dim="" c_reset="" c_bold="" c_color=""
   for name in "${names[@]}"; do
     st=$(_proj_get "$name" "status")
@@ -3010,8 +3018,10 @@ _proj_list_compact() {
     fi
     # $HOME → ~ substitution only when rendering to a tty. Piped output
     # keeps absolute paths so consumers don't have to re-expand.
-    if (( is_tty )); then
-      display="${display/#$HOME/~}"
+    # Use explicit prefix test instead of ${.../#pattern/} because the
+    # latter treats $HOME as a glob pattern (breaks if it contains [ ] * ?).
+    if (( is_tty )) && [[ "$display" == "$HOME"* ]]; then
+      display="~${display#$HOME}"
     fi
 
     # Relative time from `updated` (YYYY-MM-DD HH:MM). Empty or
@@ -3020,9 +3030,18 @@ _proj_list_compact() {
     if [[ -n "$updated" ]]; then
       if ep=$(_proj_date_to_epoch "$updated" 2>/dev/null) && [[ -n "$ep" ]]; then
         delta=$((now_epoch - ep))
-        (( delta < 0 )) && delta=0
-        rel=$(_proj_relative_time "$delta")
+        if (( delta < 0 )); then
+          rel="future?"
+        else
+          rel=$(_proj_relative_time "$delta")
+        fi
       fi
+    fi
+
+    # Truncate long project names so the fixed-width column stays aligned.
+    local dname="$name"
+    if (( ${#dname} > 16 )); then
+      dname="${dname:0:15}…"
     fi
 
     color="" icon=""
@@ -3047,11 +3066,11 @@ _proj_list_compact() {
     if (( narrow )); then
       # <60 cols: drop rel-time column to save width.
       row_prefix=$(printf "  ${c_dim}%2d${c_reset}  ${c_color}%s${c_reset} ${c_bold}%-16s${c_reset}  ${c_color}%-8s${c_reset}  " \
-        "$i" "$icon" "$name" "$st")
+        "$i" "$icon" "$dname" "$st")
       visible_prefix_len=$((2 + 2 + 2 + 2 + 16 + 2 + 8 + 2))
     else
       row_prefix=$(printf "  ${c_dim}%2d${c_reset}  ${c_color}%s${c_reset} ${c_bold}%-16s${c_reset}  ${c_color}%-8s${c_reset}  ${c_dim}%-8s${c_reset}  " \
-        "$i" "$icon" "$name" "$st" "$rel")
+        "$i" "$icon" "$dname" "$st" "$rel")
       visible_prefix_len=$((2 + 2 + 2 + 2 + 16 + 2 + 8 + 2 + 8 + 2))
     fi
 
@@ -3059,10 +3078,10 @@ _proj_list_compact() {
     # would overflow. Naive char count (no CJK width awareness — out of scope).
     if (( is_tty )); then
       max_path_len=$((cols - visible_prefix_len))
-      if (( max_path_len < 10 )); then
-        max_path_len=10
-      fi
-      if (( ${#display} > max_path_len )); then
+      if (( max_path_len < 4 )); then
+        # Terminal too narrow to show any useful path — skip the column.
+        display=""
+      elif (( ${#display} > max_path_len )); then
         display="${display:0:$((max_path_len - 1))}…"
       fi
     fi
@@ -3089,7 +3108,7 @@ _proj_list_verbose() {
   echo ""
   # All loop-scoped locals declared once at the top (gotcha #11 — re-declaring
   # `local` inside the loop body echoes the prior binding to stdout).
-  local i=1 st="" projpath="" desc="" updated="" progress="" todo="" color="" icon=""
+  local name="" i=1 st="" projpath="" desc="" updated="" progress="" todo="" color="" icon=""
   local ptype="" host="" rpath="" display=""
   for name in "${names[@]}"; do
     st=$(_proj_get "$name" "status")
@@ -3140,6 +3159,11 @@ _proj_list_verbose() {
     # Sanitize multiline content per-line: strips control bytes from each
     # visible line while preserving the user's intended newline structure.
     [[ -n "$desc" ]] && echo "$desc" | while IFS= read -r line; do echo "      ${_pc_dim}$(_proj_safe_line "$line")${_pc_reset}"; done
+    # Cap verbose path at 200 chars to prevent terminal flood from a
+    # malicious sync-pull pushing a 10KB path field.
+    if (( ${#display} > 200 )); then
+      display="${display:0:199}…"
+    fi
     echo "      ${_pc_dim}→ $display${_pc_reset}"
 
     if [[ -n "$progress" ]]; then
@@ -3191,15 +3215,18 @@ _proj_history_append() {
 }
 
 # Format a seconds delta as a compact relative-time string.
+# Caller should pass abs(now - timestamp). Negative deltas (future timestamps
+# from clock skew) are clamped — callers should check and show "future?" instead.
 _proj_relative_time() {
   local delta=$1
   (( delta < 0 )) && delta=0
-  if   (( delta < 60 ));      then echo "just now"
-  elif (( delta < 3600 ));    then echo "$((delta / 60))m ago"
-  elif (( delta < 86400 ));   then echo "$((delta / 3600))h ago"
-  elif (( delta < 604800 ));  then echo "$((delta / 86400))d ago"
-  elif (( delta < 2592000 )); then echo "$((delta / 604800))w ago"
-  else                             echo "$((delta / 2592000))mo ago"
+  if   (( delta < 60 ));       then echo "just now"
+  elif (( delta < 3600 ));     then echo "$((delta / 60))m ago"
+  elif (( delta < 86400 ));    then echo "$((delta / 3600))h ago"
+  elif (( delta < 604800 ));   then echo "$((delta / 86400))d ago"
+  elif (( delta < 2592000 ));  then echo "$((delta / 604800))w ago"
+  elif (( delta < 63072000 )); then echo "$((delta / 2592000))mo ago"
+  else                              echo ">2y ago"
   fi
 }
 
@@ -3299,8 +3326,11 @@ _proj_history() {
   while IFS='|' read -r ts_epoch _seq type detail; do
     [[ -z "$ts_epoch" ]] && continue
     delta=$((now_epoch - ts_epoch))
-    (( delta < 0 )) && delta=0
-    rel=$(_proj_relative_time "$delta")
+    if (( delta < 0 )); then
+      rel="future?"
+    else
+      rel=$(_proj_relative_time "$delta")
+    fi
 
     case "$type" in
       status) color="$_pc_green"  ;;
