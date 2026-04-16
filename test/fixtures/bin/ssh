@@ -11,12 +11,22 @@
 # and exit with $SSH_MOCK_DETECT_EXIT (default 0, so empty-but-success
 # looks like "unknown shell"). Detection calls are ALSO logged so tests
 # can assert detection was attempted.
+#
+# Reachability mode: `ssh <host> "true"` (connectivity check) exits with
+# $SSH_MOCK_EXIT. `ssh <host> "test -d <path>"` (dir check) exits with
+# $SSH_MOCK_DIR_EXIT (default 0 = dir exists).
 echo "ssh $*" >> "${SSH_CALLS_LOG:-/dev/null}"
 for arg in "$@"; do
   case "$arg" in
     *'echo $SHELL'*)
       printf '%s\n' "${SSH_MOCK_DETECT_SHELL:-}"
       exit "${SSH_MOCK_DETECT_EXIT:-0}"
+      ;;
+    'test -d '*)
+      exit "${SSH_MOCK_DIR_EXIT:-0}"
+      ;;
+    'true')
+      exit "${SSH_MOCK_EXIT:-0}"
       ;;
   esac
 done

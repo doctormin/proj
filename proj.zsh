@@ -182,6 +182,11 @@ Available: %s"
     remote_no_ssh      "ssh is not installed. Install OpenSSH or set your system up for remote access."
     remote_cc_connecting "→ Connecting to %s: %s"
     remote_bad_shell   "Refusing remote shell wrapper with unsafe characters: '%s'"
+    remote_check_conn    "  ✓ SSH connection OK"
+    remote_check_dir     "  ✓ Remote path exists"
+    remote_check_fail_conn "Cannot connect to '%s' (SSH timed out or auth failed).\n  Add --skip-check to register anyway."
+    remote_check_fail_dir  "Connected to '%s', but path does not exist: %s\n  Add --skip-check to register anyway."
+    remote_check_skip    "  (skipping reachability check)"
     remote_shell_detected "  detected remote shell: %s → will use \`%s\`"
     remote_shell_updated "✓ Remote shell for %s set to: %s"
     remote_shell_cleared "✓ Remote shell for %s cleared (will fall back to config/default)"
@@ -223,6 +228,7 @@ Available: %s"
     help_edit          "Edit project field"
     help_list          "List projects (one line each; -v for full details)"
     list_bad_arg       "Unknown argument for proj ls: '%s' (expected -v/--verbose or all/active/done)"
+    list_dup_filter    "Only one filter allowed for proj ls (got both earlier filter and '%s')"
     help_hotkeys       "Interactive panel hotkeys:"
     help_key_enter     "Jump to project directory"
     help_key_ce        "Resume Claude Code session"
@@ -401,6 +407,11 @@ _proj_i18n_zh() {
     remote_no_ssh      "未安装 ssh。请安装 OpenSSH 或检查远端连接配置。"
     remote_cc_connecting "→ 连接 %s: %s"
     remote_bad_shell   "远端 shell 包装含有不安全字符，已拒绝: '%s'"
+    remote_check_conn    "  ✓ SSH 连接正常"
+    remote_check_dir     "  ✓ 远端路径存在"
+    remote_check_fail_conn "无法连接 '%s'（SSH 超时或认证失败）。\n  加 --skip-check 可跳过检查直接注册。"
+    remote_check_fail_dir  "已连接 '%s'，但路径不存在: %s\n  加 --skip-check 可跳过检查直接注册。"
+    remote_check_skip    "  （已跳过连通性检查）"
     remote_shell_detected "  检测到远端 shell: %s → 将使用 \`%s\`"
     remote_shell_updated "✓ 已将 %s 的远端 shell 设为: %s"
     remote_shell_cleared "✓ 已清空 %s 的远端 shell（将回退到全局配置/默认）"
@@ -442,6 +453,7 @@ _proj_i18n_zh() {
     help_edit          "编辑项目字段"
     help_list          "列出项目（默认一行一个；-v 查看完整详情）"
     list_bad_arg       "proj ls 无法识别的参数: '%s' (应为 -v/--verbose 或 all/active/done)"
+    list_dup_filter    "proj ls 只能指定一个过滤条件（已有过滤条件，又收到 '%s'）"
     help_hotkeys       "交互面板快捷键:"
     help_key_enter     "跳转到项目目录"
     help_key_ce        "恢复该项目的 Claude Code 会话"
@@ -1221,11 +1233,23 @@ _proj_new() {
 
 # ── proj add-remote ──
 _proj_add_remote() {
-  local name="$1"
-  local remote_spec="$2"  # user@host:/path
+  local name="" remote_spec="" skip_check=0
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --skip-check) skip_check=1 ;;
+      *)
+        if [[ -z "$name" ]]; then
+          name="$arg"
+        elif [[ -z "$remote_spec" ]]; then
+          remote_spec="$arg"
+        fi
+        ;;
+    esac
+  done
 
   if [[ -z "$name" || -z "$remote_spec" ]]; then
-    echo "${_pc_yellow}Usage: proj add-remote <name> <user@host>:<path>${_pc_reset}"
+    echo "${_pc_yellow}Usage: proj add-remote <name> <user@host>:<path> [--skip-check]${_pc_reset}"
     return 1
   fi
 
@@ -1257,6 +1281,30 @@ _proj_add_remote() {
   if _proj_exists "$name"; then
     echo "${_pc_yellow}$(_t proj_exists "$name")${_pc_reset}"
     return 1
+  fi
+
+  # ── Reachability pre-flight ──
+  # Two-phase check: (1) can we ssh at all? (2) does the path exist?
+  # BatchMode=yes avoids password prompts; ConnectTimeout=5 caps the wait.
+  # --skip-check bypasses for offline or non-standard setups.
+  if (( skip_check )); then
+    echo "${_pc_dim}${_i[remote_check_skip]}${_pc_reset}"
+  elif (( ${+commands[ssh]} )); then
+    # Phase 1: connectivity — run a no-op command.
+    if ! ssh -o BatchMode=yes -o ConnectTimeout=5 \
+             -o StrictHostKeyChecking=accept-new \
+             -- "$host" "true" 2>/dev/null; then
+      echo "${_pc_red}$(_t remote_check_fail_conn "$host")${_pc_reset}"
+      return 1
+    fi
+    echo "${_pc_dim}${_i[remote_check_conn]}${_pc_reset}"
+    # Phase 2: path existence.
+    if ! ssh -o BatchMode=yes -o ConnectTimeout=5 \
+             -- "$host" "test -d '${rpath//\'/\'\\\'\'}'" 2>/dev/null; then
+      echo "${_pc_red}$(_t remote_check_fail_dir "$host" "$rpath")${_pc_reset}"
+      return 1
+    fi
+    echo "${_pc_dim}${_i[remote_check_dir]}${_pc_reset}"
   fi
 
   _proj_set "$name" "type" "remote"
@@ -2925,7 +2973,7 @@ _proj_list() {
       -v|--verbose) verbose=1 ;;
       all|active|done)
         if (( filter_set )); then
-          echo "${_pc_red}$(_t list_bad_arg "$arg")${_pc_reset}" >&2
+          echo "${_pc_red}$(_t list_dup_filter "$arg")${_pc_reset}" >&2
           return 1
         fi
         filter="$arg"
@@ -3020,8 +3068,14 @@ _proj_list_compact() {
     # keeps absolute paths so consumers don't have to re-expand.
     # Use explicit prefix test instead of ${.../#pattern/} because the
     # latter treats $HOME as a glob pattern (breaks if it contains [ ] * ?).
-    if (( is_tty )) && [[ "$display" == "$HOME"* ]]; then
-      display="~${display#$HOME}"
+    # Match "$HOME/" (subdir) or exact "$HOME" to avoid false positives
+    # on sibling dirs (e.g. /Users/test matching /Users/testing/foo).
+    if (( is_tty )); then
+      if [[ "$display" == "$HOME/"* ]]; then
+        display="~/${display#$HOME/}"
+      elif [[ "$display" == "$HOME" ]]; then
+        display="~"
+      fi
     fi
 
     # Relative time from `updated` (YYYY-MM-DD HH:MM). Empty or
@@ -3039,7 +3093,7 @@ _proj_list_compact() {
     fi
 
     # Truncate long project names so the fixed-width column stays aligned.
-    local dname="$name"
+    dname="$name"
     if (( ${#dname} > 16 )); then
       dname="${dname:0:15}…"
     fi
@@ -3108,7 +3162,7 @@ _proj_list_verbose() {
   echo ""
   # All loop-scoped locals declared once at the top (gotcha #11 — re-declaring
   # `local` inside the loop body echoes the prior binding to stdout).
-  local name="" i=1 st="" projpath="" desc="" updated="" progress="" todo="" color="" icon=""
+  local name="" vname="" i=1 st="" projpath="" desc="" updated="" progress="" todo="" color="" icon=""
   local ptype="" host="" rpath="" display=""
   for name in "${names[@]}"; do
     st=$(_proj_get "$name" "status")
@@ -3152,7 +3206,13 @@ _proj_list_verbose() {
       *)        color="$_pc_cyan";   icon="○" ;;
     esac
 
-    printf "  ${_pc_dim}%2d${_pc_reset}  ${color}${icon} ${_pc_bold}%-18s${_pc_reset}" "$i" "$name"
+    # Cap name at 18 chars (matches column width) to prevent terminal flood
+    # from a malicious sync-pull pushing a very long project name.
+    vname="$name"
+    if (( ${#vname} > 18 )); then
+      vname="${vname:0:17}…"
+    fi
+    printf "  ${_pc_dim}%2d${_pc_reset}  ${color}${icon} ${_pc_bold}%-18s${_pc_reset}" "$i" "$vname"
     printf "  ${color}%-8s${_pc_reset}" "$st"
     [[ -n "$updated" ]] && printf "  ${_pc_dim}$(_t last_updated "$updated")${_pc_reset}"
     echo ""
@@ -4489,7 +4549,7 @@ _proj_code() {
 # ── Tab 补全 ──
 _proj_completion() {
   local -a subcmds projects
-  subcmds=(add new rm list go cc code scan status edit config count stale import export tag untag tags doctor history help)
+  subcmds=(add add-remote new rm list go cc code scan status edit config count stale import export tag untag tags doctor history help)
 
   if [[ $CURRENT -eq 2 ]]; then
     _describe 'command' subcmds

@@ -121,3 +121,56 @@ load '../test_helper'
   [ -z "$(proj_field api progress)" ]
   [ -z "$(proj_field api todo)" ]
 }
+
+# ── Reachability pre-flight tests ──
+
+@test "add-remote runs ssh pre-flight and succeeds when host + path exist" {
+  run proj add-remote api server.example.com:/srv/api
+  assert_success
+  assert_output --partial "SSH"
+  assert_output --partial "Remote path exists"
+  assert_equal "$(proj_field api type)" "remote"
+}
+
+@test "add-remote fails when ssh connectivity check fails" {
+  export SSH_MOCK_EXIT=1
+  run proj add-remote api server.example.com:/srv/api
+  assert_failure
+  assert_output --partial "Cannot connect"
+  # No project data should be written.
+  assert [ ! -d "$(proj_data_dir)/api" ]
+}
+
+@test "add-remote fails when remote path does not exist" {
+  export SSH_MOCK_DIR_EXIT=1
+  run proj add-remote api server.example.com:/srv/missing
+  assert_failure
+  assert_output --partial "path does not exist"
+  assert [ ! -d "$(proj_data_dir)/api" ]
+}
+
+@test "add-remote --skip-check bypasses ssh pre-flight" {
+  export SSH_MOCK_EXIT=1
+  run proj add-remote api server.example.com:/srv/api --skip-check
+  assert_success
+  assert_output --partial "skipping"
+  assert_equal "$(proj_field api type)" "remote"
+}
+
+@test "add-remote --skip-check works in any arg position" {
+  export SSH_MOCK_EXIT=1
+  run proj add-remote --skip-check api server.example.com:/srv/api
+  assert_success
+  assert_equal "$(proj_field api type)" "remote"
+}
+
+@test "add-remote pre-flight logs ssh calls" {
+  export SSH_CALLS_LOG="$HOME/ssh-calls.log"
+  : > "$SSH_CALLS_LOG"
+  run proj add-remote api server.example.com:/srv/api
+  assert_success
+  # The mock ssh logs all calls. We expect the connectivity check.
+  assert [ -f "$SSH_CALLS_LOG" ]
+  run grep "true" "$SSH_CALLS_LOG"
+  assert_success
+}
