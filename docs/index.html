@@ -195,7 +195,7 @@
 <!-- ══ Nav ══ -->
 <nav>
   <div class="container">
-    <a href="#" class="nav-logo">proj <span>v1.0</span></a>
+    <a href="#" class="nav-logo">proj <span>v1.1</span></a>
     <div class="nav-links">
       <a href="#demo" data-i18n="nav_demo">Demo</a>
       <a href="#features" data-i18n="nav_features">Features</a>
@@ -286,7 +286,9 @@
       <div class="feature-card"><div class="feature-icon">&#x1F50D;</div><h3 data-i18n="f3_title">Fuzzy Find & Jump</h3><p data-i18n-html="f3_desc"><code>Ctrl+P</code> from anywhere. Fuzzy search, press Enter to jump straight in.</p></div>
       <div class="feature-card"><div class="feature-icon">&#x1F310;</div><h3 data-i18n="f7_title">Remote & Multi-Machine</h3><p data-i18n="f7_desc">Track projects on remote servers. Sync metadata across machines via git. SSH jump from the panel.</p></div>
       <div class="feature-card"><div class="feature-icon">&#x1F916;</div><h3 data-i18n="f5_title">AI Does the Busywork</h3><p data-i18n-html="f5_desc">Run <code>proj add</code>, and Claude writes description, progress, and TODO. Requires Claude Code (optional).</p></div>
-      <div class="feature-card"><div class="feature-icon">&#x2328;&#xFE0F;</div><h3 data-i18n="f6_title">Lightweight & Fast</h3><p data-i18n-html="f6_desc">~1500 lines, under 50 KB. Loads in milliseconds. No binary, no daemon, no compile step.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x1F3F7;&#xFE0F;</div><h3 data-i18n="f8_title">Tags & Smart Filters</h3><p data-i18n-html="f8_desc">Tag projects, then filter: <code>proj :tag=backend</code>, <code>proj :stale</code>, <code>proj :remote</code>. Batch operations with multi-select.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x1F4E6;</div><h3 data-i18n="f9_title">Import, Export & History</h3><p data-i18n-html="f9_desc">Import from zoxide or a directory scan. Export to JSON. <code>proj history</code> shows a timeline of every change.</p></div>
+      <div class="feature-card"><div class="feature-icon">&#x2328;&#xFE0F;</div><h3 data-i18n="f6_title">Lightweight & Fast</h3><p data-i18n-html="f6_desc">Pure shell script. Loads in milliseconds. No binary, no daemon, no compile step.</p></div>
     </div>
   </div>
 </section>
@@ -357,7 +359,9 @@ const T = {
     f3_title:"Fuzzy Find & Jump", f3_desc:'<code>Ctrl+P</code> from anywhere. Fuzzy search, press Enter to jump straight in.',
     f7_title:"Remote & Multi-Machine", f7_desc:"Track projects on remote servers. Sync metadata across machines via git. SSH jump from the panel.",
     f5_title:"AI Does the Busywork", f5_desc:'Run <code>proj add</code>, and Claude writes description, progress, and TODO. Requires Claude Code (optional).',
-    f6_title:"Lightweight & Fast", f6_desc:'~1500 lines, under 50 KB. Loads in milliseconds. No binary, no daemon, no compile step.',
+    f8_title:"Tags & Smart Filters", f8_desc:'Tag projects, then filter: <code>proj :tag=backend</code>, <code>proj :stale</code>, <code>proj :remote</code>. Batch operations with multi-select.',
+    f9_title:"Import, Export & History", f9_desc:'Import from zoxide or a directory scan. Export to JSON. <code>proj history</code> shows a timeline of every change.',
+    f6_title:"Lightweight & Fast", f6_desc:'Pure shell script. Loads in milliseconds. No binary, no daemon, no compile step.',
     hk_label:"// keyboard first", hk_title:"Every action, one keystroke.", hk_desc:"No submenus. No mouse. Just muscle memory.",
     hk_key:"Key", hk_action:"Action",
     hk1:"Open project panel from anywhere", hk2:"Jump to project directory", hk3:"Resume Claude Code session",
@@ -388,7 +392,9 @@ const T = {
     f3_title:"模糊搜索 & 快速跳转", f3_desc:'随时 <code>Ctrl+P</code>，模糊搜索项目，回车直接跳转进去。',
     f7_title:"远程 & 多机同步", f7_desc:'追踪远程服务器上的项目，通过 git 在多台机器间同步元数据。面板内一键 SSH 跳转。',
     f5_title:"AI 做杂活", f5_desc:'运行 <code>proj add</code>，Claude 自动生成描述、进展和 TODO。需要 Claude Code（可选）。',
-    f6_title:"轻量极速", f6_desc:'~1500 行，不到 50 KB。毫秒级加载。无二进制、无守护进程、无编译。',
+    f8_title:"标签 & 智能过滤", f8_desc:'给项目打标签，然后过滤：<code>proj :tag=backend</code>、<code>proj :stale</code>、<code>proj :remote</code>。支持多选批量操作。',
+    f9_title:"导入、导出 & 历史", f9_desc:'从 zoxide 或目录扫描导入。导出为 JSON。<code>proj history</code> 展示每次变更的时间线。',
+    f6_title:"轻量极速", f6_desc:'纯 shell 脚本。毫秒级加载。无二进制、无守护进程、无编译。',
     hk_label:"// 键盘优先", hk_title:"每个操作，一个按键。", hk_desc:"没有子菜单，不用鼠标，只有肌肉记忆。",
     hk_key:"按键", hk_action:"操作",
     hk1:"随时打开项目面板", hk2:"跳转到项目目录", hk3:"恢复 Claude Code 会话",

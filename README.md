@@ -16,7 +16,7 @@ Claude scans your code. proj tracks progress/TODO and helps you resume Claude Co
 [![Shell: zsh](https://img.shields.io/badge/Shell-zsh-blue.svg)](#requirements)
 [![Platform: macOS & Linux](https://img.shields.io/badge/Platform-macOS%20%26%20Linux-orange.svg)](#requirements)
 [![AI: Claude Code](https://img.shields.io/badge/AI-Claude%20Code-blueviolet.svg)](https://docs.anthropic.com/en/docs/claude-code)
-[![Version: 1.1.0-dev](https://img.shields.io/badge/Version-1.1.0--dev-blue.svg)](#)
+[![Version: 1.1.0](https://img.shields.io/badge/Version-1.1.0-blue.svg)](#)
 
 [Features](#features) · [Install](#install) · [Why not X?](#why-not-x) · [Usage](#usage) · [Privacy](#privacy)
 
