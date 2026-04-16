@@ -9,14 +9,14 @@
 Too many projects. Pick up any of them in 3 seconds.
 Claude scans your code. proj tracks progress/TODO and helps you resume Claude Code sessions.
 
-**~1500 lines of shell. No binary. No Node/Python/Go runtime. Loads in milliseconds.**
+**~4600 lines of shell. No binary. No Node/Python/Go runtime. Loads in milliseconds.**
 
 [![CI](https://github.com/doctormin/proj/actions/workflows/ci.yml/badge.svg)](https://github.com/doctormin/proj/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Shell: zsh](https://img.shields.io/badge/Shell-zsh-blue.svg)](#requirements)
 [![Platform: macOS & Linux](https://img.shields.io/badge/Platform-macOS%20%26%20Linux-orange.svg)](#requirements)
 [![AI: Claude Code](https://img.shields.io/badge/AI-Claude%20Code-blueviolet.svg)](https://docs.anthropic.com/en/docs/claude-code)
-[![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-blue.svg)](#)
+[![Version: 1.1.0-dev](https://img.shields.io/badge/Version-1.1.0--dev-blue.svg)](#)
 
 [Features](#features) · [Install](#install) · [Why not X?](#why-not-x) · [Usage](#usage) · [Privacy](#privacy)
 
@@ -45,15 +45,21 @@ Then type `proj` (or `Ctrl+P` from anywhere) — see progress, TODO, and Claude 
 
 ## Features
 
-- **AI-Generated Progress & TODO** — Run `proj add`, and Claude writes the summary, progress, and TODO for you. Never write project notes yourself
-- **Fuzzy Find & Jump** — `Ctrl+P` from anywhere, fuzzy search, press Enter to jump straight in
+- **AI-Generated Progress & TODO** — Run `proj add`, and Claude writes the summary, progress, and TODO for you. Use `--no-scan` to skip, or `-y` to skip the large-repo confirmation prompt
+- **Fuzzy Find & Jump** — `Ctrl+P` from anywhere, fuzzy search, press Enter to jump straight in. Smart filters: `proj :stale`, `proj :tag=backend`, `proj :remote`
 - **Resume Claude Code Sessions** — One keystroke to resume your most recent Claude Code session. Preview shows session history and summaries
-- **Remote Project Tracking** — `proj add-remote` to track projects on remote servers. `Enter` to SSH jump, metadata synced locally
-- **Multi-Machine Sync** — `proj sync` to keep all project metadata in sync across machines via a private git repo
+- **Remote Project Tracking** — `proj add-remote` with SSH reachability pre-flight, auto-detected `remote_shell` wrapper (zsh/bash/fish), and `--skip-check` for offline setups
+- **Multi-Machine Sync** — `proj sync` keeps all metadata in sync via a private git repo. Tombstone sync propagates deletes across machines
 - **Meta Session** — `proj meta` launches an AI advisor that knows all your projects. Ask "which project should I work on next?"
+- **Project Scaffolding** — `proj new <template>` creates a project from bundled templates (node, python, rust, zsh-plugin) or your own
+- **Tags** — `proj tag <name> <tag>`, filter by `proj :tag=backend`, see all tags with `proj tags`
+- **Import & Export** — `proj import <file.json>`, `proj import zoxide`, `proj export` for backup or migration
+- **History** — `proj history <name>` shows a timeline of status changes, edits, and tag events
+- **Health Check** — `proj doctor` diagnoses environment, schema, sync status, and project integrity
+- **Batch Operations** — `Tab` to multi-select in the panel, then `Ctrl-S` for batch status change or `Ctrl-D` for batch delete/done
 - **Claude Status Detection** — Preview panel shows whether Claude Code is actively running for each project
 - **Status Tracking** — `active` / `paused` / `blocked` / `done`, your prompt shows the count via Starship
-- **Lightweight & Fast** — ~1500 lines, under 50 KB. Loads in milliseconds. Pure `zsh` shell script, no binary, no daemon, no background process. Plain text data you can `cat`, `grep`, or `git diff`
+- **Lightweight & Fast** — ~4600 lines, under 150 KB. Loads in milliseconds. Pure `zsh` shell script, no binary, no daemon, no background process. Plain text data you can `cat`, `grep`, or `git diff`
 - **Cross-Platform** — macOS + Linux. Tab completion, `starship` integration, i18n (English / 中文)
 
 ## Requirements
@@ -112,23 +118,27 @@ These are excellent adjacent tools, not direct substitutes.
 | AI project advisor | Yes | — | — | — |
 | Core dependency model | `zsh` + `fzf` | Rust binary (~2 MB) | Ruby runtime (~50 MB) | Go binary + tmux |
 
-**TL;DR:** `zoxide` helps you `cd` faster. `proj` helps you *remember what you were doing*. And it's just a shell script — nothing to compile, very little to maintain. proj fills the gap none of them cover.
+**TL;DR:** `zoxide` helps you `cd` faster. `proj` helps you *remember what you were doing*. And it's just a shell script — nothing to compile, nothing to update. proj fills the gap none of them cover.
 
 ## Usage
 
 ### Local projects
 
 ```bash
-proj add                          # Add current directory
+proj add                          # Add current directory (Claude auto-scans)
 proj add my-api ~/src/api         # Add with custom name and path
+proj add --no-scan                # Skip Claude scan
+proj add -y                       # Skip large-repo confirmation prompt
+proj new python my-app ~/src      # Scaffold from template + register
 ```
 
 ### Remote projects
 
 ```bash
 proj add-remote api user@server:/home/user/api
-# Shows in panel with [user@server] label
-# Enter to SSH jump, metadata stored locally
+# SSH pre-flight checks connectivity + path existence
+# Auto-detects remote shell (zsh/bash/fish)
+# --skip-check to bypass the pre-flight
 ```
 
 ### Multi-machine sync
@@ -146,6 +156,24 @@ proj meta                         # Launch Meta Session
 # Ask: "Summarize all my TODOs across projects"
 ```
 
+### Tags
+
+```bash
+proj tag my-api backend rust      # Add one or more tags
+proj untag my-api rust            # Remove a tag
+proj tags                         # List all tags with project counts
+proj :tag=backend                 # Open panel filtered to a tag
+```
+
+### Import & export
+
+```bash
+proj import ~/repos               # Scan a directory for git repos
+proj import zoxide                # Import from zoxide database
+proj import data.json             # Import from a proj export file
+proj export > backup.json         # Export all projects to JSON
+```
+
 ### Other commands
 
 ```bash
@@ -154,7 +182,10 @@ proj cc [name]                    # Resume Claude Code session
 proj scan [name]                  # Rescan with Claude Code
 proj status <name> <state>        # Change status (active/paused/blocked/done)
 proj edit <name> <field> <value>  # Edit field (desc/path/progress/todo)
-proj list [active|done]           # Static list view
+proj ls [active|done]             # Compact one-line list (-v for verbose)
+proj stale [days]                 # List projects not updated in N days
+proj history <name>               # Show event timeline
+proj doctor                       # Health check
 proj config                       # Settings
 proj --version                    # Show version
 proj help                         # Show help
@@ -170,6 +201,10 @@ Inside the interactive panel (`proj` or `Ctrl+P`):
 | `Ctrl-E` | Resume Claude Code session |
 | `Ctrl-R` | AI rescan progress & TODO |
 | `Ctrl-X` | Mark done or remove project |
+| `Tab` | Toggle multi-select on current row |
+| `Ctrl-S` | Batch status change (all selected) |
+| `Ctrl-D` | Batch delete/done (all selected) |
+| `Ctrl-O` | Cycle sort: updated → name → status → progress |
 | `Esc` | Exit panel |
 | Type | Fuzzy search / filter |
 
@@ -186,6 +221,19 @@ proj config                       # Interactive settings menu
 proj config lang zh               # Set Chinese
 proj config lang en               # Set English
 proj config sync-repo <git-url>   # Set sync repository
+proj config remote_shell "zsh -ic" # Global remote shell wrapper
+```
+
+### Smart filters
+
+Open the panel pre-filtered:
+
+```bash
+proj :active                      # By status
+proj :stale                       # Not updated recently
+proj :remote                      # Remote projects only
+proj :tag=backend                 # By tag
+proj :missing                     # Path no longer exists
 ```
 
 Config is stored in `~/.proj/config`.
@@ -200,6 +248,7 @@ Config is stored in `~/.proj/config`.
 ├── version                       # Installed version
 ├── meta/                         # Meta Session working directory
 │   └── CLAUDE.md                 # Auto-generated project context (updated on `proj meta`)
+├── .tombstones/                  # Cross-machine delete propagation
 └── data/
     └── <project-name>/
         ├── path.<machine-id>     # Local path (per-machine)
@@ -209,8 +258,11 @@ Config is stored in `~/.proj/config`.
         ├── desc                  # AI-generated description
         ├── progress              # AI-generated progress
         ├── todo                  # AI-generated TODO
+        ├── tags                  # Space-separated tag list
+        ├── history.log           # Event timeline (UTC timestamps)
         ├── host                  # Remote only: user@hostname
-        └── remote_path           # Remote only: path on server
+        ├── remote_path           # Remote only: path on server
+        └── remote_shell          # Remote only: shell wrapper (e.g., "zsh -ic")
 ```
 
 Plain text files. No database. Easy to backup, sync, or edit by hand.

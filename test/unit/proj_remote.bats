@@ -80,6 +80,13 @@ load '../test_helper'
   assert_output --partial "Invalid path"
 }
 
+@test "add-remote rejects path with single quote" {
+  run proj add-remote api "server:/srv/it's-here"
+  assert_failure
+  assert_output --partial "Invalid path"
+  assert [ ! -d "$(proj_data_dir)/api" ]
+}
+
 @test "add-remote rejects path with dot-dot traversal" {
   run proj add-remote api 'server:/srv/../etc/passwd'
   assert_failure

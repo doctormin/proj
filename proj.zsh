@@ -1272,7 +1272,7 @@ _proj_add_remote() {
   # Use a single-quoted pattern variable so the backtick is a literal char
   # class member rather than an unterminated command-substitution opener —
   # the inline form parses under interactive zsh but fails under `zsh -c`.
-  local _rpath_meta='[`$;|&]'
+  local _rpath_meta=$'[`$;|&\']'
   if [[ "$rpath" =~ $_rpath_meta || "$rpath" =~ '\.\.' ]]; then
     echo "${_pc_red}Invalid path: contains unsafe characters${_pc_reset}"
     return 1
@@ -1287,9 +1287,9 @@ _proj_add_remote() {
   # Two-phase check: (1) can we ssh at all? (2) does the path exist?
   # BatchMode=yes avoids password prompts; ConnectTimeout=5 caps the wait.
   # --skip-check bypasses for offline or non-standard setups.
-  if (( skip_check )); then
+  if (( skip_check )) || ! (( ${+commands[ssh]} )); then
     echo "${_pc_dim}${_i[remote_check_skip]}${_pc_reset}"
-  elif (( ${+commands[ssh]} )); then
+  else
     # Phase 1: connectivity — run a no-op command.
     if ! ssh -o BatchMode=yes -o ConnectTimeout=5 \
              -o StrictHostKeyChecking=accept-new \
@@ -1298,9 +1298,12 @@ _proj_add_remote() {
       return 1
     fi
     echo "${_pc_dim}${_i[remote_check_conn]}${_pc_reset}"
-    # Phase 2: path existence.
+    # Phase 2: path existence. Same connection options as Phase 1 so the
+    # host key accepted in Phase 1 is also accepted here (the key may not
+    # have been persisted to known_hosts if the file is read-only).
     if ! ssh -o BatchMode=yes -o ConnectTimeout=5 \
-             -- "$host" "test -d '${rpath//\'/\'\\\'\'}'" 2>/dev/null; then
+             -o StrictHostKeyChecking=accept-new \
+             -- "$host" "test -d '${rpath}'" 2>/dev/null; then
       echo "${_pc_red}$(_t remote_check_fail_dir "$host" "$rpath")${_pc_reset}"
       return 1
     fi
